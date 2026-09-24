@@ -17,8 +17,8 @@ const client = new WiroClient(
 app.get('/generate', async (req, res) => {
   try {
     // 1. Run the AI Model (e.g., generating a simple text response)
-    const run = await client.runModel('openai/gpt-4o-mini', {
-      prompt: 'Write a one-sentence welcome message for my new Railway app.'
+    const run = await client.runModel('alibaba/wan-2-7-image', {
+      prompt: 'A cinematic image of a ferrari car racing in open road.'
     });
 
     if (!run.result) {
