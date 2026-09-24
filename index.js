@@ -18,7 +18,9 @@ app.get('/generate', async (req, res) => {
   try {
     // 1. Run the AI Model (e.g., generating a simple text response)
     const run = await client.runModel('alibaba/wan-2-7-image', {
-      prompt: 'A cinematic image of a ferrari car racing in open road.'
+      prompt: 'A cinematic image of a ferrari car racing in open road.',
+      size: '1K',
+      samples: 1
     });
 
     if (!run.result) {
