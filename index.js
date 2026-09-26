@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { WiroClient, WiroApiError, TaskWaitTimeoutError } from '@wiro-ai/wiro-mcp/client';
+import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -134,54 +134,6 @@ async function lookupToolDetail(modelSlug) {
   return (result.tool || [])[0] || null;
 }
 
-const PRICE_METHOD_LABELS = {
-  'cp-outputPictureCount': 'per image',
-  'cp-outputVideoLength': 'per video second',
-  'cp-realtimeturn': 'per turn',
-  'cp-readoutput': 'model-reported'
-};
-
-// Wiro exposes a model's estimated cost via a handful of fields on the
-// /Tool/List and /Tool/Detail responses (`dynamicprice`, `approximatelycost`,
-// `cps`) - there is no separate "estimate before running" endpoint, so we
-// surface these fields (the same ones Wiro's own MCP tool formats for
-// display) to answer "can Wiro show an estimated cost before generating?".
-function estimateModelPricing(tool) {
-  if (!tool) return null;
-
-  if (tool.dynamicprice) {
-    try {
-      const parsed = typeof tool.dynamicprice === 'string' ? JSON.parse(tool.dynamicprice) : tool.dynamicprice;
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        const prices = parsed.map(p => Number(p.price)).filter(n => Number.isFinite(n));
-        const label = PRICE_METHOD_LABELS[parsed[0].priceMethod] || parsed[0].priceMethod || 'run';
-        if (prices.length === 1) {
-          return { estimatedCostUsd: prices[0], label: `$${prices[0]} / ${label}` };
-        }
-        if (prices.length > 1) {
-          const min = Math.min(...prices);
-          const max = Math.max(...prices);
-          return { estimatedCostUsd: null, label: `$${min} – $${max} / ${label} (varies by parameters)` };
-        }
-      }
-    } catch {
-      // Fall through to the simpler approximatelycost/cps fields below.
-    }
-  }
-
-  const approx = parseFloat(tool.approximatelycost ?? '0');
-  if (approx > 0) {
-    return { estimatedCostUsd: approx, label: `~$${approx} per run (estimated)` };
-  }
-
-  const cps = parseFloat(tool.cps ?? '0');
-  if (cps > 0) {
-    return { estimatedCostUsd: null, label: `$${cps} per second (varies by duration)` };
-  }
-
-  return null;
-}
-
 // Model Schema Endpoint
 // Different models expect different (often required) parameters -
 // e.g. bytedance/seedream-v4 requires `size`, `maxImages` and `watermark`,
@@ -239,10 +191,7 @@ app.get('/models/schema', async (req, res) => {
       slug: requestedModel,
       title: tool.title,
       description: tool.seodescription || tool.description || '',
-      parameters,
-      // Estimated cost before running generation (see estimateModelPricing).
-      // `null` when Wiro doesn't expose enough pricing info to estimate.
-      pricing: estimateModelPricing(tool)
+      parameters
     });
   } catch (error) {
     if (error instanceof WiroApiError) {
@@ -311,48 +260,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
-// How long we're willing to keep polling Wiro for a single task before
-// giving up. The Wiro SDK's own default (120 seconds) is too short for
-// slower models - notably video generation - which routinely take several
-// minutes. Previously, once that default timeout was hit the backend threw
-// a `TaskWaitTimeoutError` and reported a generic failure to the frontend
-// even though the task kept running (and later completed) on Wiro's side -
-// this is why the generated media was visible in the Wiro dashboard but
-// never appeared on this page. Configurable via env var so it can be tuned
-// per-deployment without a code change.
-const TASK_WAIT_TIMEOUT_MS = Number(process.env.GENERATION_TIMEOUT_MS) || 15 * 60 * 1000; // 15 minutes
-
-// Mirrors the Wiro SDK's own `TERMINAL_STATUSES` (not exported from the
-// "./client" entrypoint we import from) - used to tell a genuinely finished
-// task apart from one we simply stopped polling early on timeout.
-const TERMINAL_TASK_STATUSES = ['task_postprocess_end', 'task_cancel'];
-
 // Dynamic Model Execution Endpoint
-//
-// Generation on Wiro can take anywhere from a few seconds to several
-// minutes, and the frontend previously had no visibility into what was
-// happening while it waited for a single, synchronous JSON response. This
-// endpoint now streams progress as Server-Sent Events so the frontend can:
-//   1. Show the task number as soon as the task is created ("started").
-//   2. Show live status updates while the task is running ("progress").
-//   3. Show the task number/media and the actual cost Wiro charged for the
-//      run ("done") - `task.totalcost` is exactly the field Wiro's own
-//      "Get Task Price" tool reports (billed only for successful tasks).
 app.post('/generate', async (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-
-  const send = (event, data) => {
-    res.write(`event: ${event}\n`);
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  // Stop polling Wiro if the client navigates away/aborts mid-generation.
-  const abortController = new AbortController();
-  req.on('close', () => abortController.abort());
-
   try {
     const { model, prompt, ...rest } = req.body || {};
 
@@ -372,51 +281,13 @@ app.post('/generate', async (req, res) => {
       options[key] = value;
     }
 
-    const run = await client.runModel(selectedModel, options, abortController.signal);
+    const run = await client.runModel(selectedModel, options);
 
     if (!run || !run.result) {
-      const message = run?.errors?.map(e => e.message).join(', ') || 'Model execution failed';
-      send('error', { success: false, error: message });
-      return res.end();
+      return res.status(500).json({ error: run?.errors || 'Model execution failed' });
     }
 
-    // Let the frontend display the task number the moment it exists, well
-    // before generation finishes.
-    send('started', { taskId: run.taskid, taskToken: run.socketaccesstoken });
-
-    let lastStatus = null;
-    let result;
-    try {
-      result = await client.waitForTask(run.socketaccesstoken, TASK_WAIT_TIMEOUT_MS, {
-        signal: abortController.signal,
-        onPoll: (currentTask) => {
-          if (currentTask.status !== lastStatus) {
-            lastStatus = currentTask.status;
-            send('progress', {
-              taskId: currentTask.id,
-              status: currentTask.status,
-              elapsedSeconds: currentTask.elapsedseconds || null
-            });
-          }
-        }
-      });
-    } catch (waitError) {
-      // Even with a generous timeout, polling can still time out (e.g. a
-      // very slow model, or a transient network hiccup between us and
-      // Wiro). Wiro itself doesn't stop running the task when that happens
-      // - it's why the task still shows up finished with its media in the
-      // Wiro dashboard even though our own request gave up. `lastDetail` on
-      // a `TaskWaitTimeoutError` is the last status snapshot we did manage
-      // to fetch, so if that snapshot already reflects a successful,
-      // completed task we can still report it instead of a misleading
-      // "failed to generate output" error.
-      if (waitError instanceof TaskWaitTimeoutError && waitError.lastDetail?.tasklist?.[0]) {
-        result = waitError.lastDetail;
-      } else {
-        throw waitError;
-      }
-    }
-
+    const result = await client.waitForTask(run.socketaccesstoken);
     const task = result.tasklist[0];
 
     if (task && task.pexit === '0') {
@@ -428,35 +299,18 @@ app.post('/generate', async (req, res) => {
       const outputs = task.outputs || [];
       const mediaOutput = outputs.find(o => o && o.url) || null;
 
-      send('done', {
+      return res.json({
         success: true,
-        taskId: task.id,
         output: task.debugoutput,
         mediaUrl: mediaOutput ? mediaOutput.url : null,
         outputs,
-        // Wiro only bills successful tasks - `totalcost` is unset/"0" for
-        // tasks that failed, which is why this is only read here.
-        costUsd: task.totalcost ? Number(task.totalcost) : 0,
-        task
-      });
-    } else if (task && !TERMINAL_TASK_STATUSES.includes(task.status)) {
-      // The task hasn't actually finished yet (we simply stopped polling) -
-      // say so explicitly rather than claiming it "failed", since it may
-      // still complete successfully on Wiro's side.
-      send('error', {
-        success: false,
-        taskId: task.id,
-        error: `Still processing on Wiro after ${Math.round(TASK_WAIT_TIMEOUT_MS / 1000)}s (status: ${task.status}). Check the Wiro dashboard for task #${task.id} - it may finish shortly.`
+        task: task
       });
     } else {
-      send('error', { success: false, taskId: task?.id, error: 'Task failed to generate output.' });
+      return res.status(500).json({ success: false, error: 'Task failed to generate output.' });
     }
   } catch (error) {
-    if (!abortController.signal.aborted) {
-      send('error', { success: false, error: error.message });
-    }
-  } finally {
-    res.end();
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
