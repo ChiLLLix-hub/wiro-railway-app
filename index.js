@@ -1,57 +1,61 @@
 import express from 'express';
+import cors from 'cors';
 import { WiroClient } from '@wiro-ai/wiro-mcp/client';
 
 const app = express();
-
-// Railway automatically provides a PORT environment variable.
-// We use 3000 as a fallback for local testing.
 const PORT = process.env.PORT || 3000;
 
-// Initialize the Wiro Client using Environment Variables
-// (We will set these securely in Railway later)
+// 1. Enable CORS for your frontend domain
+app.use(cors({
+  origin: ['https://agromar.com.my', 'http://localhost:3000'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// 2. Middleware to parse JSON payloads
+app.use(express.json());
+
+// Initialize Wiro Client
 const client = new WiroClient(
   process.env.WIRO_API_KEY,
   process.env.WIRO_API_SECRET
 );
 
-app.get('/generate', async (req, res) => {
+// 3. Define your generation endpoint (POST allows receiving custom prompts from frontend)
+app.post('/generate', async (req, res) => {
   try {
-    // 1. Run the AI Model (e.g., generating a simple text response)
-    
-    const run = await client.runModel('alibaba/wan-2-7-image', {
-    prompt: 'A cinematic image set following the woman…',
-    size: '1K',
-    samples: 1
-});
+    const { prompt } = req.body;
 
-    if (!run.result) {
-      return res.status(500).json({ error: run.errors });
+    const run = await client.runModel('alibaba/wan-2-7-image', {
+      prompt: prompt || 'A cinematic image set following the woman…',
+      size: '1K',
+      samples: 1
+    });
+
+    if (!run || !run.result) {
+      return res.status(500).json({ error: run?.errors || 'Model execution failed' });
     }
 
-    // 2. Wait for the task to finish processing
+    // Wait for the task to complete
     const result = await client.waitForTask(run.socketaccesstoken);
     const task = result.tasklist[0];
 
-    // 3. Send the output back to the browser
-    if (task.pexit === '0') {
-      res.send(`<h1>AI Says:</h1> <p>${task.debugoutput}</p>`);
+    if (task && task.pexit === '0') {
+      // Send a clean JSON response back to your web app
+      return res.json({
+        success: true,
+        output: task.debugoutput,
+        task: task
+      });
     } else {
-      res.send('Task failed to generate.');
+      return res.status(500).json({ success: false, error: 'Task failed to generate.' });
     }
   } catch (error) {
-    res.status(500).send(error.message);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// 4. Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
-const express = require('express');
-const cors = require('cors');
-const app = express();
-
-app.use(cors({
-  origin: ['https://agromar.com.my', 'http://localhost:3000'], // Allow your frontend origin
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
