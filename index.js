@@ -149,7 +149,9 @@ app.get('/models/schema', async (req, res) => {
     // copy-pasted URL) turns "owner/project" into "owner/project/" which
     // getModelSchema() would otherwise happily send to /Tool/Detail as
     // slugproject="project/", causing Wiro to report the model as not found.
-    const requestedModel = String(model).trim().replace(/^\/+|\/+$/g, '');
+    let requestedModel = String(model).trim();
+    while (requestedModel.startsWith('/')) requestedModel = requestedModel.slice(1);
+    while (requestedModel.endsWith('/')) requestedModel = requestedModel.slice(0, -1);
 
     const tool = await resolveModelDetail(requestedModel);
 
