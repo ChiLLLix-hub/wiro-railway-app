@@ -46,3 +46,12 @@ app.get('/generate', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+const express = require('express');
+const cors = require('cors');
+const app = express();
+
+app.use(cors({
+  origin: ['https://agromar.com.my', 'http://localhost:3000'], // Allow your frontend origin
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
