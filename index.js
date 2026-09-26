@@ -40,7 +40,8 @@ const upload = multer({
 });
 
 function formatTaskCost(task) {
-  const amount = task?.pexit === '0' ? String(task.totalcost || '0') : '0';
+  const isSuccessful = String(task?.pexit) === '0';
+  const amount = isSuccessful ? String(task.totalcost || '0') : '0';
   return {
     amount,
     display: amount === '0' ? '$0 (no charge)' : `$${amount}`

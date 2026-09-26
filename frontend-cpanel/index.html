@@ -722,7 +722,7 @@
 
   function renderTaskDetails(data, downloads) {
     taskIdEl.textContent = data.taskId || (data.task && data.task.id) || '—';
-    taskCostEl.textContent = data.totalCostDisplay || formatTaskCost(data.totalCost || (data.task && data.task.totalcost));
+    taskCostEl.textContent = data.totalCostDisplay || formatTaskCost(data.totalCost ?? (data.task && data.task.totalcost));
     downloadsList.innerHTML = '';
 
     if (downloads.length === 0) {
