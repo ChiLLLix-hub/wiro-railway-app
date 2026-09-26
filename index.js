@@ -134,6 +134,54 @@ async function lookupToolDetail(modelSlug) {
   return (result.tool || [])[0] || null;
 }
 
+const PRICE_METHOD_LABELS = {
+  'cp-outputPictureCount': 'per image',
+  'cp-outputVideoLength': 'per video second',
+  'cp-realtimeturn': 'per turn',
+  'cp-readoutput': 'model-reported'
+};
+
+// Wiro exposes a model's estimated cost via a handful of fields on the
+// /Tool/List and /Tool/Detail responses (`dynamicprice`, `approximatelycost`,
+// `cps`) - there is no separate "estimate before running" endpoint, so we
+// surface these fields (the same ones Wiro's own MCP tool formats for
+// display) to answer "can Wiro show an estimated cost before generating?".
+function estimateModelPricing(tool) {
+  if (!tool) return null;
+
+  if (tool.dynamicprice) {
+    try {
+      const parsed = typeof tool.dynamicprice === 'string' ? JSON.parse(tool.dynamicprice) : tool.dynamicprice;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const prices = parsed.map(p => Number(p.price)).filter(n => Number.isFinite(n));
+        const label = PRICE_METHOD_LABELS[parsed[0].priceMethod] || parsed[0].priceMethod || 'run';
+        if (prices.length === 1) {
+          return { estimatedCostUsd: prices[0], label: `$${prices[0]} / ${label}` };
+        }
+        if (prices.length > 1) {
+          const min = Math.min(...prices);
+          const max = Math.max(...prices);
+          return { estimatedCostUsd: null, label: `$${min} – $${max} / ${label} (varies by parameters)` };
+        }
+      }
+    } catch {
+      // Fall through to the simpler approximatelycost/cps fields below.
+    }
+  }
+
+  const approx = parseFloat(tool.approximatelycost ?? '0');
+  if (approx > 0) {
+    return { estimatedCostUsd: approx, label: `~$${approx} per run (estimated)` };
+  }
+
+  const cps = parseFloat(tool.cps ?? '0');
+  if (cps > 0) {
+    return { estimatedCostUsd: null, label: `$${cps} per second (varies by duration)` };
+  }
+
+  return null;
+}
+
 // Model Schema Endpoint
 // Different models expect different (often required) parameters -
 // e.g. bytedance/seedream-v4 requires `size`, `maxImages` and `watermark`,
@@ -191,7 +239,10 @@ app.get('/models/schema', async (req, res) => {
       slug: requestedModel,
       title: tool.title,
       description: tool.seodescription || tool.description || '',
-      parameters
+      parameters,
+      // Estimated cost before running generation (see estimateModelPricing).
+      // `null` when Wiro doesn't expose enough pricing info to estimate.
+      pricing: estimateModelPricing(tool)
     });
   } catch (error) {
     if (error instanceof WiroApiError) {
@@ -261,7 +312,31 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 });
 
 // Dynamic Model Execution Endpoint
+//
+// Generation on Wiro can take anywhere from a few seconds to a few minutes,
+// and the frontend previously had no visibility into what was happening
+// while it waited for a single, synchronous JSON response. This endpoint now
+// streams progress as Server-Sent Events so the frontend can:
+//   1. Show the task number as soon as the task is created ("started").
+//   2. Show live status updates while the task is running ("progress").
+//   3. Show the task number/media and the actual cost Wiro charged for the
+//      run ("done") - `task.totalcost` is exactly the field Wiro's own
+//      "Get Task Price" tool reports (billed only for successful tasks).
 app.post('/generate', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const send = (event, data) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Stop polling Wiro if the client navigates away/aborts mid-generation.
+  const abortController = new AbortController();
+  req.on('close', () => abortController.abort());
+
   try {
     const { model, prompt, ...rest } = req.body || {};
 
@@ -281,13 +356,33 @@ app.post('/generate', async (req, res) => {
       options[key] = value;
     }
 
-    const run = await client.runModel(selectedModel, options);
+    const run = await client.runModel(selectedModel, options, abortController.signal);
 
     if (!run || !run.result) {
-      return res.status(500).json({ error: run?.errors || 'Model execution failed' });
+      const message = run?.errors?.map(e => e.message).join(', ') || 'Model execution failed';
+      send('error', { success: false, error: message });
+      return res.end();
     }
 
-    const result = await client.waitForTask(run.socketaccesstoken);
+    // Let the frontend display the task number the moment it exists, well
+    // before generation finishes.
+    send('started', { taskId: run.taskid, taskToken: run.socketaccesstoken });
+
+    let lastStatus = null;
+    const result = await client.waitForTask(run.socketaccesstoken, undefined, {
+      signal: abortController.signal,
+      onPoll: (currentTask) => {
+        if (currentTask.status !== lastStatus) {
+          lastStatus = currentTask.status;
+          send('progress', {
+            taskId: currentTask.id,
+            status: currentTask.status,
+            elapsedSeconds: currentTask.elapsedseconds || null
+          });
+        }
+      }
+    });
+
     const task = result.tasklist[0];
 
     if (task && task.pexit === '0') {
@@ -299,18 +394,26 @@ app.post('/generate', async (req, res) => {
       const outputs = task.outputs || [];
       const mediaOutput = outputs.find(o => o && o.url) || null;
 
-      return res.json({
+      send('done', {
         success: true,
+        taskId: task.id,
         output: task.debugoutput,
         mediaUrl: mediaOutput ? mediaOutput.url : null,
         outputs,
-        task: task
+        // Wiro only bills successful tasks - `totalcost` is unset/"0" for
+        // tasks that failed, which is why this is only read here.
+        costUsd: task.totalcost ? Number(task.totalcost) : 0,
+        task
       });
     } else {
-      return res.status(500).json({ success: false, error: 'Task failed to generate output.' });
+      send('error', { success: false, taskId: task?.id, error: 'Task failed to generate output.' });
     }
   } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
+    if (!abortController.signal.aborted) {
+      send('error', { success: false, error: error.message });
+    }
+  } finally {
+    res.end();
   }
 });
 
