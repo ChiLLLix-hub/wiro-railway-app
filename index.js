@@ -19,36 +19,48 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
 
-// FIXED: Dynamic models list endpoint with correct Wiro API authentication headers
-// Dynamic models list endpoint
-app.get('/models', async (req, res) => {
-  try {
-    const response = await fetch('https://api.wiro.ai/v1/Models', {
-      headers: {
-        'x-api-key': process.env.WIRO_API_KEY,
-        'x-api-secret': process.env.WIRO_API_SECRET
-      }
-    });
-
-    const data = await response.json();
-
-    // Handle Wiro's standard wrapper response { result: true, data: [...] }
-    if (data.result && Array.isArray(data.data)) {
-      return res.json(data.data);
-    } else if (Array.isArray(data)) {
-      return res.json(data);
-    } else {
-      return res.json(data.data || []);
-    }
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 const client = new WiroClient(
   process.env.WIRO_API_KEY,
   process.env.WIRO_API_SECRET
 );
+
+// Dynamic models list endpoint
+// Uses the Wiro SDK's searchModels() helper, which correctly calls the
+// authenticated `/Tool/List` endpoint (POST + HMAC signature headers)
+// instead of the non-existent, unauthenticated `GET /v1/Models` route.
+app.get('/models', async (req, res) => {
+  try {
+    const { search, categories, slugowner, sort, start, limit } = req.query;
+
+    const result = await client.searchModels({
+      search: search || undefined,
+      categories: categories ? String(categories).split(',') : undefined,
+      slugowner: slugowner || undefined,
+      sort: sort || 'relevance',
+      start: start ? Number(start) : 0,
+      limit: limit ? Number(limit) : 100
+    });
+
+    if (!result.result) {
+      const message = result.errors?.map(e => e.message).join(', ') || 'Failed to fetch models.';
+      return res.status(502).json({ error: message });
+    }
+
+    const models = (result.tool || []).map(model => ({
+      slug: `${model.cleanslugowner}/${model.cleanslugproject}`,
+      owner: model.cleanslugowner,
+      project: model.cleanslugproject,
+      name: model.title || `${model.cleanslugowner}/${model.cleanslugproject}`,
+      title: model.title,
+      description: model.seodescription || model.description || '',
+      categories: (model.categories || []).filter(c => c !== 'tool')
+    }));
+
+    return res.json({ data: models, total: Number(result.total) || models.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Dynamic Model Execution Endpoint
 app.post('/generate', async (req, res) => {
