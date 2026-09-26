@@ -20,16 +20,26 @@ app.get('/health', (req, res) => {
 });
 
 // FIXED: Dynamic models list endpoint with correct Wiro API authentication headers
+// Dynamic models list endpoint
 app.get('/models', async (req, res) => {
   try {
-    const response = await fetch('https://api.wiro.ai/v1/models', {
+    const response = await fetch('https://api.wiro.ai/v1/Models', {
       headers: {
         'x-api-key': process.env.WIRO_API_KEY,
         'x-api-secret': process.env.WIRO_API_SECRET
       }
     });
+
     const data = await response.json();
-    res.json(data);
+
+    // Handle Wiro's standard wrapper response { result: true, data: [...] }
+    if (data.result && Array.isArray(data.data)) {
+      return res.json(data.data);
+    } else if (Array.isArray(data)) {
+      return res.json(data);
+    } else {
+      return res.json(data.data || []);
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
