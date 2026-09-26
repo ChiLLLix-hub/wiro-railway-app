@@ -39,6 +39,26 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB per file, matches typical Wiro reference-media limits
 });
 
+function formatTaskCost(task) {
+  const amount = task?.pexit === '0' ? String(task.totalcost || '0') : '0';
+  return {
+    amount,
+    display: amount === '0' ? '$0 (no charge)' : `$${amount}`
+  };
+}
+
+function normalizeTaskOutputs(outputs = []) {
+  return outputs
+    .filter(output => output && output.url)
+    .map((output, index) => ({
+      id: `${output.name || 'output'}-${index + 1}`,
+      name: output.name || `Output ${index + 1}`,
+      url: output.url,
+      contentType: output.contenttype || 'application/octet-stream',
+      size: output.size || null
+    }));
+}
+
 // Dynamic models list endpoint
 // Uses the Wiro SDK's searchModels() helper, which correctly calls the
 // authenticated `/Tool/List` endpoint (POST + HMAC signature headers)
@@ -297,12 +317,18 @@ app.post('/generate', async (req, res) => {
       // usable media URL. Surface the first output with a URL explicitly so
       // the frontend doesn't have to guess-parse debugoutput.
       const outputs = task.outputs || [];
-      const mediaOutput = outputs.find(o => o && o.url) || null;
+      const downloadableOutputs = normalizeTaskOutputs(outputs);
+      const mediaOutput = downloadableOutputs[0] || null;
+      const taskCost = formatTaskCost(task);
 
       return res.json({
         success: true,
         output: task.debugoutput,
         mediaUrl: mediaOutput ? mediaOutput.url : null,
+        taskId: task.id,
+        totalCost: taskCost.amount,
+        totalCostDisplay: taskCost.display,
+        downloads: downloadableOutputs,
         outputs,
         task: task
       });

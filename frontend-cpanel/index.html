@@ -101,6 +101,22 @@
             Open Full File ↗
           </a>
         </div>
+
+        <div class="grid gap-3 md:grid-cols-2 text-sm">
+          <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
+            <p class="text-xs uppercase tracking-wider text-slate-500">Task ID</p>
+            <p id="task-id" class="mt-2 font-mono text-slate-200 break-all">—</p>
+          </div>
+          <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
+            <p class="text-xs uppercase tracking-wider text-slate-500">Generation Cost</p>
+            <p id="task-cost" class="mt-2 text-slate-200">—</p>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Files</h3>
+          <div id="downloads-list" class="space-y-2 text-sm text-slate-300"></div>
+        </div>
       </div>
     </div>
 
@@ -149,6 +165,9 @@
   const outputContainer = document.getElementById('output-container');
   const mediaWrapper = document.getElementById('media-wrapper');
   const downloadLink = document.getElementById('download-link');
+  const taskIdEl = document.getElementById('task-id');
+  const taskCostEl = document.getElementById('task-cost');
+  const downloadsList = document.getElementById('downloads-list');
   const dynamicParams = document.getElementById('dynamic-params');
   const paramsStatus = document.getElementById('params-status');
 
@@ -585,6 +604,7 @@
 
     errorBox.classList.add('hidden');
     outputContainer.classList.add('hidden');
+    resetOutputDetails();
 
     let paramValues;
     try {
@@ -613,10 +633,20 @@
 
       if (response.ok && data.success) {
         let mediaUrl = extractMediaUrl(data);
+        const downloads = getDownloadableOutputs(data);
+        const primaryDownloadUrl = mediaUrl || (downloads[0] && downloads[0].url) || '';
+
+        renderTaskDetails(data, downloads);
+        downloadLink.classList.toggle('hidden', !primaryDownloadUrl);
+        downloadLink.href = primaryDownloadUrl;
 
         if (mediaUrl) {
           renderMedia(mediaUrl);
-          downloadLink.href = mediaUrl;
+        } else {
+          renderEmptyMediaState();
+        }
+
+        if (mediaUrl || downloads.length > 0 || data.taskId || data.totalCostDisplay) {
           outputContainer.classList.remove('hidden');
         } else {
           showError('Generation finished, but no media URL could be extracted.');
@@ -670,6 +700,78 @@
     }
 
     return null;
+  }
+
+  function getDownloadableOutputs(data) {
+    const directDownloads = Array.isArray(data.downloads) ? data.downloads : [];
+    if (directDownloads.length > 0) {
+      return directDownloads.filter(item => item && item.url);
+    }
+
+    const outputs = data.outputs || (data.task && data.task.outputs) || [];
+    return outputs
+      .filter(output => output && output.url)
+      .map((output, index) => ({
+        id: `${output.name || 'output'}-${index + 1}`,
+        name: output.name || `Output ${index + 1}`,
+        url: output.url,
+        contentType: output.contenttype || output.contentType || 'application/octet-stream',
+        size: output.size || null
+      }));
+  }
+
+  function renderTaskDetails(data, downloads) {
+    taskIdEl.textContent = data.taskId || (data.task && data.task.id) || '—';
+    taskCostEl.textContent = data.totalCostDisplay || formatTaskCost(data.totalCost || (data.task && data.task.totalcost));
+    downloadsList.innerHTML = '';
+
+    if (downloads.length === 0) {
+      downloadsList.innerHTML = '<p class="text-slate-500">No download files were returned for this task.</p>';
+      return;
+    }
+
+    downloads.forEach((download, index) => {
+      const item = document.createElement('a');
+      item.href = download.url;
+      item.target = '_blank';
+      item.rel = 'noopener noreferrer';
+      item.className = 'flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 hover:border-slate-700';
+      item.innerHTML = `
+        <span>
+          <span class="block text-slate-100">${escapeHtml(download.name || `Output ${index + 1}`)}</span>
+          <span class="block text-xs text-slate-500">${escapeHtml(download.contentType || 'application/octet-stream')}</span>
+        </span>
+        <span class="text-blue-400">Open ↗</span>
+      `;
+      downloadsList.appendChild(item);
+    });
+  }
+
+  function resetOutputDetails() {
+    taskIdEl.textContent = '—';
+    taskCostEl.textContent = '—';
+    downloadsList.innerHTML = '';
+    downloadLink.classList.remove('hidden');
+    downloadLink.removeAttribute('href');
+    mediaWrapper.innerHTML = '';
+  }
+
+  function renderEmptyMediaState() {
+    mediaWrapper.innerHTML = '<p class="px-6 text-center text-sm text-slate-400">Generation completed. Preview unavailable, but the generated file links are ready below.</p>';
+  }
+
+  function formatTaskCost(rawCost) {
+    const cost = rawCost == null || rawCost === '' ? '0' : String(rawCost);
+    return cost === '0' ? '$0 (no charge)' : `$${cost}`;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
   }
 
   // Helper function to render either <img> or <video> element
