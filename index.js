@@ -15,6 +15,11 @@ app.use(cors({
 // 2. Middleware to parse JSON payloads
 app.use(express.json());
 
+// 👇 ADD IT HERE (Right after middleware, before main endpoints)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date() });
+});
+
 // Initialize Wiro Client
 const client = new WiroClient(
   process.env.WIRO_API_KEY,
