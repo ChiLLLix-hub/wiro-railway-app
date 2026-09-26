@@ -646,7 +646,7 @@
           renderEmptyMediaState();
         }
 
-        if (mediaUrl || downloads.length > 0 || data.taskId || data.totalCostDisplay) {
+        if (mediaUrl || downloads.length > 0) {
           outputContainer.classList.remove('hidden');
         } else {
           showError('Generation finished, but no media URL could be extracted.');
