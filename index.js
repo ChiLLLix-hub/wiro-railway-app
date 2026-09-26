@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
+import { WiroClient, WiroApiError, TaskWaitTimeoutError } from '@wiro-ai/wiro-mcp/client';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -311,12 +311,28 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 
+// How long we're willing to keep polling Wiro for a single task before
+// giving up. The Wiro SDK's own default (120 seconds) is too short for
+// slower models - notably video generation - which routinely take several
+// minutes. Previously, once that default timeout was hit the backend threw
+// a `TaskWaitTimeoutError` and reported a generic failure to the frontend
+// even though the task kept running (and later completed) on Wiro's side -
+// this is why the generated media was visible in the Wiro dashboard but
+// never appeared on this page. Configurable via env var so it can be tuned
+// per-deployment without a code change.
+const TASK_WAIT_TIMEOUT_MS = Number(process.env.GENERATION_TIMEOUT_MS) || 15 * 60 * 1000; // 15 minutes
+
+// Mirrors the Wiro SDK's own `TERMINAL_STATUSES` (not exported from the
+// "./client" entrypoint we import from) - used to tell a genuinely finished
+// task apart from one we simply stopped polling early on timeout.
+const TERMINAL_TASK_STATUSES = ['task_postprocess_end', 'task_cancel'];
+
 // Dynamic Model Execution Endpoint
 //
-// Generation on Wiro can take anywhere from a few seconds to a few minutes,
-// and the frontend previously had no visibility into what was happening
-// while it waited for a single, synchronous JSON response. This endpoint now
-// streams progress as Server-Sent Events so the frontend can:
+// Generation on Wiro can take anywhere from a few seconds to several
+// minutes, and the frontend previously had no visibility into what was
+// happening while it waited for a single, synchronous JSON response. This
+// endpoint now streams progress as Server-Sent Events so the frontend can:
 //   1. Show the task number as soon as the task is created ("started").
 //   2. Show live status updates while the task is running ("progress").
 //   3. Show the task number/media and the actual cost Wiro charged for the
@@ -369,19 +385,37 @@ app.post('/generate', async (req, res) => {
     send('started', { taskId: run.taskid, taskToken: run.socketaccesstoken });
 
     let lastStatus = null;
-    const result = await client.waitForTask(run.socketaccesstoken, undefined, {
-      signal: abortController.signal,
-      onPoll: (currentTask) => {
-        if (currentTask.status !== lastStatus) {
-          lastStatus = currentTask.status;
-          send('progress', {
-            taskId: currentTask.id,
-            status: currentTask.status,
-            elapsedSeconds: currentTask.elapsedseconds || null
-          });
+    let result;
+    try {
+      result = await client.waitForTask(run.socketaccesstoken, TASK_WAIT_TIMEOUT_MS, {
+        signal: abortController.signal,
+        onPoll: (currentTask) => {
+          if (currentTask.status !== lastStatus) {
+            lastStatus = currentTask.status;
+            send('progress', {
+              taskId: currentTask.id,
+              status: currentTask.status,
+              elapsedSeconds: currentTask.elapsedseconds || null
+            });
+          }
         }
+      });
+    } catch (waitError) {
+      // Even with a generous timeout, polling can still time out (e.g. a
+      // very slow model, or a transient network hiccup between us and
+      // Wiro). Wiro itself doesn't stop running the task when that happens
+      // - it's why the task still shows up finished with its media in the
+      // Wiro dashboard even though our own request gave up. `lastDetail` on
+      // a `TaskWaitTimeoutError` is the last status snapshot we did manage
+      // to fetch, so if that snapshot already reflects a successful,
+      // completed task we can still report it instead of a misleading
+      // "failed to generate output" error.
+      if (waitError instanceof TaskWaitTimeoutError && waitError.lastDetail?.tasklist?.[0]) {
+        result = waitError.lastDetail;
+      } else {
+        throw waitError;
       }
-    });
+    }
 
     const task = result.tasklist[0];
 
@@ -404,6 +438,15 @@ app.post('/generate', async (req, res) => {
         // tasks that failed, which is why this is only read here.
         costUsd: task.totalcost ? Number(task.totalcost) : 0,
         task
+      });
+    } else if (task && !TERMINAL_TASK_STATUSES.includes(task.status)) {
+      // The task hasn't actually finished yet (we simply stopped polling) -
+      // say so explicitly rather than claiming it "failed", since it may
+      // still complete successfully on Wiro's side.
+      send('error', {
+        success: false,
+        taskId: task.id,
+        error: `Still processing on Wiro after ${Math.round(TASK_WAIT_TIMEOUT_MS / 1000)}s (status: ${task.status}). Check the Wiro dashboard for task #${task.id} - it may finish shortly.`
       });
     } else {
       send('error', { success: false, taskId: task?.id, error: 'Task failed to generate output.' });
