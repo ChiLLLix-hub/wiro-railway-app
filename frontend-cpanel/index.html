@@ -764,8 +764,8 @@
   }
 
   function formatTaskCost(rawCost, pexit) {
-    if ((rawCost == null || rawCost === '') && pexit != null && String(pexit) !== '0') {
-      return '$0 (no charge)';
+    if (rawCost == null || rawCost === '') {
+      return pexit != null && String(pexit) === '0' ? '$0 (no charge)' : '—';
     }
     const cost = rawCost == null || rawCost === '' ? '0' : String(rawCost);
     return cost === '0' ? '$0 (no charge)' : `$${cost}`;
