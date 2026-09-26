@@ -8,80 +8,96 @@
   <!--<link rel="icon" href="https://files.svgcdn.io/flat-ui/rocket.svg" type="image/x-icon"> -->
   <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-8">
 
-  <div class="max-w-xl w-full bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-6">
-    
+  <div class="max-w-5xl mx-auto space-y-6">
+
     <div class="text-center space-y-2">
       <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400">
         AI Multi-Model Studio
       </h1>
-      <p class="text-slate-400 text-sm">Image & Video Generation via Wiro AI</p>
+      <p class="text-slate-400 text-sm">Image &amp; Video Generation via Wiro AI</p>
     </div>
 
-    <form id="generator-form" class="space-y-4">
-      
-      <!-- Model Selector -->
+    <!-- ==================== MODEL BROWSER VIEW ==================== -->
+    <div id="browser-view" class="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
       <div>
-        <label for="model" class="block text-sm font-medium text-slate-300 mb-1">Select Model</label>
-        <select id="model" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
-          <optgroup label="Image Models">
-            <option value="alibaba/wan-2-7-image" selected>Wan 2.7 Image (Alibaba)</option>
-            <option value="bytedance/seedream-v5-pro-uncensored">SeeDream V5 Pro (ByteDance)</option>
-            <option value="bytedance/seedream-v4">SeeDream V4 (ByteDance)</option>
-          </optgroup>
-          <optgroup label="Video Models">
-            <option value="alibaba/wan-2-1-video">Wan 2.1 Video (Alibaba)</option>
-            <option value="bytedance/animatediff">AnimateDiff (ByteDance)</option>
-          </optgroup>
-        </select>
+        <h2 class="text-xl font-bold text-slate-100">Model Browser</h2>
+        <p class="text-slate-400 text-sm">Browse available models interactively. Click on a model to see its details on the model page.</p>
       </div>
 
-      <!-- Prompt Input -->
-      <div>
-        <label for="prompt" class="block text-sm font-medium text-slate-300 mb-1">Text Prompt</label>
-        <textarea 
-          id="prompt" 
-          rows="3" 
-          required
-          placeholder="Describe what you want to generate..." 
-          class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
-        ></textarea>
-      </div>
-
-      <button 
-        type="submit" 
-        id="submit-btn"
-        class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition flex items-center justify-center space-x-2 disabled:opacity-50"
+      <input
+        id="model-search"
+        type="text"
+        placeholder="Search models..."
+        class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
       >
-        <span id="btn-text">Generate Asset</span>
-        <svg id="spinner" class="animate-spin h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-        </svg>
-      </button>
-    </form>
 
-    <!-- Error Alert -->
-    <div id="error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4">
-      <p id="error-message"></p>
+      <div id="models-status" class="text-slate-400 text-sm py-2">Loading models…</div>
+
+      <div id="models-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
     </div>
 
-    <!-- Output Preview Area -->
-    <div id="output-container" class="hidden space-y-4 pt-2">
-      <div class="flex justify-between items-center">
-        <h2 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Result</h2>
-      </div>
-      
-      <!-- Dynamic Media Container -->
-      <div id="media-wrapper" class="relative bg-slate-950 rounded-xl overflow-hidden border border-slate-800 aspect-square flex items-center justify-center">
-        <!-- JS will dynamically insert <img> or <video> here -->
+    <!-- ==================== MODEL RUN VIEW ==================== -->
+    <div id="model-view" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4 max-w-xl mx-auto">
+      <button id="back-btn" type="button" class="text-blue-400 hover:underline text-sm flex items-center gap-1">
+        ← Back to Model Browser
+      </button>
+
+      <div>
+        <h2 id="model-title" class="text-xl font-bold text-slate-100"></h2>
+        <p id="model-slug" class="text-slate-400 text-xs font-mono mt-1"></p>
+        <p id="model-description" class="text-slate-400 text-sm mt-2"></p>
       </div>
 
-      <div class="flex items-center justify-between text-sm pt-1">
-        <a id="download-link" href="" target="_blank" class="text-blue-400 hover:underline">
-          Open Full File ↗
-        </a>
+      <form id="generator-form" class="space-y-4">
+
+        <!-- Prompt Input -->
+        <div>
+          <label for="prompt" class="block text-sm font-medium text-slate-300 mb-1">Text Prompt</label>
+          <textarea
+            id="prompt"
+            rows="3"
+            required
+            placeholder="Describe what you want to generate..."
+            class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+          ></textarea>
+        </div>
+
+        <button
+          type="submit"
+          id="submit-btn"
+          class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition flex items-center justify-center space-x-2 disabled:opacity-50"
+        >
+          <span id="btn-text">Generate Asset</span>
+          <svg id="spinner" class="animate-spin h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </button>
+      </form>
+
+      <!-- Error Alert -->
+      <div id="error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4">
+        <p id="error-message"></p>
+      </div>
+
+      <!-- Output Preview Area -->
+      <div id="output-container" class="hidden space-y-4 pt-2">
+        <div class="flex justify-between items-center">
+          <h2 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Result</h2>
+        </div>
+
+        <!-- Dynamic Media Container -->
+        <div id="media-wrapper" class="relative bg-slate-950 rounded-xl overflow-hidden border border-slate-800 aspect-square flex items-center justify-center">
+          <!-- JS will dynamically insert <img> or <video> here -->
+        </div>
+
+        <div class="flex items-center justify-between text-sm pt-1">
+          <a id="download-link" href="" target="_blank" class="text-blue-400 hover:underline">
+            Open Full File ↗
+          </a>
+        </div>
       </div>
     </div>
 
@@ -91,8 +107,29 @@
   const RAILWAY_BACKEND_URL = 'https://wiro-railway-app-production.up.railway.app/generate';
   const RAILWAY_MODELS_URL = 'https://wiro-railway-app-production.up.railway.app/models';
 
+  const FALLBACK_MODELS = [
+    { slug: 'alibaba/wan-2-7-image', title: 'Wan 2.7 Image (Alibaba)', categories: ['text-to-image'] },
+    { slug: 'bytedance/seedream-v5-pro-uncensored', title: 'SeeDream V5 Pro (ByteDance)', categories: ['text-to-image'] },
+    { slug: 'bytedance/seedream-v4', title: 'SeeDream V4 (ByteDance)', categories: ['text-to-image'] },
+    { slug: 'alibaba/wan-2-1-video', title: 'Wan 2.1 Video (Alibaba)', categories: ['text-to-video'] },
+    { slug: 'bytedance/animatediff', title: 'AnimateDiff (ByteDance)', categories: ['text-to-video'] }
+  ];
+
+  // View elements
+  const browserView = document.getElementById('browser-view');
+  const modelView = document.getElementById('model-view');
+  const backBtn = document.getElementById('back-btn');
+
+  // Browser elements
+  const modelSearch = document.getElementById('model-search');
+  const modelsStatus = document.getElementById('models-status');
+  const modelsGrid = document.getElementById('models-grid');
+
+  // Model run elements
+  const modelTitleEl = document.getElementById('model-title');
+  const modelSlugEl = document.getElementById('model-slug');
+  const modelDescriptionEl = document.getElementById('model-description');
   const form = document.getElementById('generator-form');
-  const modelSelect = document.getElementById('model');
   const promptInput = document.getElementById('prompt');
   const submitBtn = document.getElementById('submit-btn');
   const btnText = document.getElementById('btn-text');
@@ -103,48 +140,161 @@
   const mediaWrapper = document.getElementById('media-wrapper');
   const downloadLink = document.getElementById('download-link');
 
-  // Load available models dynamically when page loads
-    window.addEventListener('DOMContentLoaded', async () => {
-      const modelSelect = document.getElementById('model');
-    
-      try {
-        const res = await fetch('https://wiro-railway-app-production.up.railway.app/models', {
-          cache: 'no-store'
-        });
-        
-        if (!res.ok) {
-          throw new Error(`Server returned status ${res.status}`);
-        }
-    
-        const models = await res.json();
-        const modelList = Array.isArray(models) ? models : (models.data || []);
-    
-        if (Array.isArray(modelList) && modelList.length > 0) {
-          modelSelect.innerHTML = ''; // Clear default/hardcoded options
-    
-          modelList.forEach(m => {
-            const option = document.createElement('option');
-            // Wiro models use "owner/project" slugs e.g. "alibaba/wan-2-7-image"
-            option.value = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name));
-    
-            const name = m.title || m.name || m.slug || m.id;
-            const category = Array.isArray(m.categories) && m.categories.length > 0
-              ? m.categories[0]
-              : (m.category || m.type || 'Model');
-    
-            option.textContent = `${name} (${category})`;
-            modelSelect.appendChild(option);
-          });
-        }
-      } catch (err) {
-        console.error('Could not fetch dynamic models from Railway backend:', err);
-        showError(`Could not load models from server: ${err.message}. Using default list.`);
-      }
-    });
+  let allModels = [];
+  let selectedModel = null; // { slug, title, description, categories }
 
-  // Handle form submission
+  // ------------------------------------------------------------------
+  // Model Browser: fetch, render, search, and routing
+  // ------------------------------------------------------------------
+
+  async function loadModels() {
+    try {
+      const res = await fetch(RAILWAY_MODELS_URL, { cache: 'no-store' });
+
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+
+      const payload = await res.json();
+      const modelList = Array.isArray(payload) ? payload : (payload.data || []);
+
+      allModels = (modelList.length > 0 ? modelList : FALLBACK_MODELS).map(normalizeModel);
+      modelsStatus.classList.add('hidden');
+    } catch (err) {
+      console.error('Could not fetch dynamic models from Railway backend:', err);
+      allModels = FALLBACK_MODELS.map(normalizeModel);
+      modelsStatus.textContent = `Could not load live models from server (${err.message}). Showing default list.`;
+      modelsStatus.classList.remove('hidden');
+    }
+
+    renderModelGrid(allModels);
+    handleRouteFromHash();
+  }
+
+  function normalizeModel(m) {
+    const slug = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name || ''));
+    return {
+      slug,
+      title: m.title || m.name || slug,
+      description: m.description || '',
+      categories: Array.isArray(m.categories) && m.categories.length > 0
+        ? m.categories
+        : [m.category || m.type || 'Model']
+    };
+  }
+
+  function renderModelGrid(models) {
+    modelsGrid.innerHTML = '';
+
+    if (!models.length) {
+      const empty = document.createElement('div');
+      empty.className = 'text-slate-400 text-sm col-span-full text-center py-6';
+      empty.textContent = 'No models match your search.';
+      modelsGrid.appendChild(empty);
+      return;
+    }
+
+    models.forEach(model => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'text-left bg-slate-950 border border-slate-800 rounded-xl p-4 hover:border-blue-500 hover:bg-slate-800/50 transition focus:outline-none focus:ring-2 focus:ring-blue-500';
+      card.innerHTML = `
+        <h3 class="font-semibold text-slate-100 text-sm mb-2">${escapeHtml(model.title)}</h3>
+        <code class="inline-block bg-slate-800 text-blue-300 text-xs rounded px-2 py-1 break-all">${escapeHtml(model.slug)}</code>
+      `;
+      card.addEventListener('click', () => selectModel(model));
+      modelsGrid.appendChild(card);
+    });
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str == null ? '' : String(str);
+    return div.innerHTML;
+  }
+
+  modelSearch.addEventListener('input', () => {
+    const term = modelSearch.value.trim().toLowerCase();
+
+    if (!term) {
+      renderModelGrid(allModels);
+      return;
+    }
+
+    const filtered = allModels.filter(m =>
+      m.title.toLowerCase().includes(term)
+      || m.slug.toLowerCase().includes(term)
+      || m.categories.some(c => c.toLowerCase().includes(term))
+    );
+
+    renderModelGrid(filtered);
+  });
+
+  // ------------------------------------------------------------------
+  // Navigation between Model Browser and Model Run page
+  // ------------------------------------------------------------------
+
+  function selectModel(model) {
+    selectedModel = model;
+    window.location.hash = `model/${encodeURIComponent(model.slug)}`;
+    showModelView(model);
+  }
+
+  function showModelView(model) {
+    modelTitleEl.textContent = model.title;
+    modelSlugEl.textContent = model.slug;
+    modelDescriptionEl.textContent = model.description || '';
+    modelDescriptionEl.classList.toggle('hidden', !model.description);
+
+    errorBox.classList.add('hidden');
+    outputContainer.classList.add('hidden');
+    promptInput.value = '';
+
+    browserView.classList.add('hidden');
+    modelView.classList.remove('hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function showBrowserView() {
+    selectedModel = null;
+    modelView.classList.add('hidden');
+    browserView.classList.remove('hidden');
+
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }
+
+  backBtn.addEventListener('click', showBrowserView);
+
+  window.addEventListener('hashchange', handleRouteFromHash);
+
+  function handleRouteFromHash() {
+    const match = /^#model\/(.+)$/.exec(window.location.hash);
+    if (!match) {
+      return;
+    }
+
+    const slug = decodeURIComponent(match[1]);
+    const model = allModels.find(m => m.slug === slug);
+
+    if (model) {
+      selectedModel = model;
+      showModelView(model);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Model Run: generate handling (unchanged behavior, targeting selectedModel)
+  // ------------------------------------------------------------------
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+
+    if (!selectedModel) {
+      showError('No model selected. Please choose a model from the browser.');
+      return;
+    }
 
     errorBox.classList.add('hidden');
     outputContainer.classList.add('hidden');
@@ -158,7 +308,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: modelSelect.value,
+          model: selectedModel.slug,
           prompt: promptInput.value.trim()
         })
       });
@@ -242,7 +392,9 @@
     errorMessage.textContent = typeof msg === 'object' ? JSON.stringify(msg) : msg;
     errorBox.classList.remove('hidden');
   }
-</script>
+
+  loadModels();
+  </script>
 
 </body>
 </html>
