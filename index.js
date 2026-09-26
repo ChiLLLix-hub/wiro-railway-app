@@ -19,12 +19,13 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
 
-// 👇 PASTE IT HERE (Dynamic models list endpoint)
+// FIXED: Dynamic models list endpoint with correct Wiro API authentication headers
 app.get('/models', async (req, res) => {
   try {
     const response = await fetch('https://api.wiro.ai/v1/models', {
       headers: {
-        'Authorization': `Bearer ${process.env.WIRO_API_KEY}`
+        'x-api-key': process.env.WIRO_API_KEY,
+        'x-api-secret': process.env.WIRO_API_SECRET
       }
     });
     const data = await response.json();
@@ -44,10 +45,8 @@ app.post('/generate', async (req, res) => {
   try {
     const { model, prompt, size, duration, aspect_ratio } = req.body;
 
-    // Default to Wan 2.7 Image if no model is provided
     const selectedModel = model || 'alibaba/wan-2-7-image';
 
-    // Construct options payload dynamically
     const options = {
       prompt: prompt || 'A cinematic studio render...'
     };
@@ -56,7 +55,6 @@ app.post('/generate', async (req, res) => {
     if (duration) options.duration = duration;
     if (aspect_ratio) options.aspect_ratio = aspect_ratio;
 
-    // Run whatever model was requested by the client
     const run = await client.runModel(selectedModel, options);
 
     if (!run || !run.result) {
