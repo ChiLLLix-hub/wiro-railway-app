@@ -76,10 +76,73 @@ app.get('/models', async (req, res) => {
   }
 });
 
+// Model Schema Endpoint
+// Different models expect different (often required) parameters -
+// e.g. bytedance/seedream-v4 requires `size`, `maxImages` and `watermark`,
+// while alibaba/wan-2-1-video expects video-specific fields. Instead of
+// guessing/hardcoding fields per model, expose the model's real parameter
+// schema (from Wiro's `/Tool/Detail` endpoint) so the frontend can render
+// the correct inputs and mark required fields for the user.
+app.get('/models/schema', async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+
+  try {
+    const { model } = req.query;
+
+    if (!model) {
+      return res.status(400).json({ error: 'Query parameter "model" is required (e.g. ?model=owner/project).' });
+    }
+
+    const result = await client.getModelSchema(String(model));
+
+    if (!result.result) {
+      const message = result.errors?.map(e => e.message).join(', ') || 'Failed to fetch model schema.';
+      return res.status(502).json({ error: message });
+    }
+
+    const tool = (result.tool || [])[0];
+
+    if (!tool) {
+      return res.status(404).json({ error: `Model "${model}" was not found.` });
+    }
+
+    const parameters = (tool.parameters || []).map(group => ({
+      title: group.title,
+      items: (group.items || []).map(item => ({
+        id: item.id,
+        type: item.type,
+        label: item.label,
+        description: item.description,
+        default: item.default,
+        required: !!item.required,
+        placeholder: item.placeholder,
+        note: item.note,
+        options: item.options,
+        min: item.min,
+        max: item.max,
+        step: item.step,
+        advanced: !!item.advanced
+      }))
+    }));
+
+    return res.json({
+      slug: model,
+      title: tool.title,
+      description: tool.seodescription || tool.description || '',
+      parameters
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Dynamic Model Execution Endpoint
 app.post('/generate', async (req, res) => {
   try {
-    const { model, prompt, size, duration, aspect_ratio } = req.body;
+    const { model, prompt, ...rest } = req.body || {};
 
     const selectedModel = model || 'alibaba/wan-2-7-image';
 
@@ -87,9 +150,15 @@ app.post('/generate', async (req, res) => {
       prompt: prompt || 'A cinematic studio render...'
     };
 
-    if (size) options.size = size;
-    if (duration) options.duration = duration;
-    if (aspect_ratio) options.aspect_ratio = aspect_ratio;
+    // Forward every other field the client sends as-is. Models each define
+    // their own required/optional parameters (size, maxImages, watermark,
+    // duration, aspect_ratio, etc.) via their schema - see GET
+    // /models/schema - so rather than hardcoding a fixed set of fields here
+    // we pass through whatever the (schema-driven) frontend form collected.
+    for (const [key, value] of Object.entries(rest)) {
+      if (value === undefined || value === null || value === '') continue;
+      options[key] = value;
+    }
 
     const run = await client.runModel(selectedModel, options);
 

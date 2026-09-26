@@ -64,6 +64,10 @@
           ></textarea>
         </div>
 
+        <!-- Dynamic Model Parameters (rendered from the model's schema) -->
+        <div id="params-status" class="hidden text-slate-400 text-xs"></div>
+        <div id="dynamic-params" class="space-y-4"></div>
+
         <button
           type="submit"
           id="submit-btn"
@@ -106,6 +110,7 @@
   <script>
   const RAILWAY_BACKEND_URL = 'https://wiro-railway-app-production.up.railway.app/generate';
   const RAILWAY_MODELS_URL = 'https://wiro-railway-app-production.up.railway.app/models';
+  const RAILWAY_SCHEMA_URL = 'https://wiro-railway-app-production.up.railway.app/models/schema';
 
   const FALLBACK_MODELS = [
     { slug: 'alibaba/wan-2-7-image', title: 'Wan 2.7 Image (Alibaba)', categories: ['text-to-image'] },
@@ -139,9 +144,13 @@
   const outputContainer = document.getElementById('output-container');
   const mediaWrapper = document.getElementById('media-wrapper');
   const downloadLink = document.getElementById('download-link');
+  const dynamicParams = document.getElementById('dynamic-params');
+  const paramsStatus = document.getElementById('params-status');
 
   let allModels = [];
   let selectedModel = null; // { slug, title, description, categories }
+  let currentSchemaFields = []; // Flattened list of { id, type, ... } for the selected model
+  let schemaRequestToken = 0; // Guards against stale/out-of-order schema responses
 
   // ------------------------------------------------------------------
   // Model Browser: fetch, render, search, and routing
@@ -253,7 +262,155 @@
     browserView.classList.add('hidden');
     modelView.classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    loadModelSchema(model);
   }
+
+  // ------------------------------------------------------------------
+  // Model Schema: fetch each model's real parameters and render inputs
+  // ------------------------------------------------------------------
+  // Different models require different parameters (e.g. SeeDream V4 needs
+  // `size`, `maxImages` and `watermark`, while a video model needs
+  // `duration`/`aspect_ratio`). Rather than hardcoding those per model, we
+  // fetch the model's schema from the backend and render matching form
+  // fields, so required parameters are always collected before submitting.
+  async function loadModelSchema(model) {
+    const requestToken = ++schemaRequestToken;
+    currentSchemaFields = [];
+    dynamicParams.innerHTML = '';
+    paramsStatus.classList.add('hidden');
+
+    try {
+      const res = await fetch(`${RAILWAY_SCHEMA_URL}?model=${encodeURIComponent(model.slug)}`, { cache: 'no-store' });
+
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+
+      const payload = await res.json();
+
+      if (requestToken !== schemaRequestToken) return; // A newer model was selected meanwhile
+
+      const groups = Array.isArray(payload.parameters) ? payload.parameters : [];
+      renderParamFields(groups);
+    } catch (err) {
+      if (requestToken !== schemaRequestToken) return;
+      console.error('Could not fetch model schema:', err);
+      paramsStatus.textContent = 'Could not load extra parameters for this model. Only the prompt will be sent.';
+      paramsStatus.classList.remove('hidden');
+    }
+  }
+
+  function renderParamFields(groups) {
+    dynamicParams.innerHTML = '';
+    currentSchemaFields = [];
+
+    groups.forEach(group => {
+      (group.items || []).forEach(item => {
+        // The prompt is already collected via the dedicated Text Prompt field above.
+        if (!item.id || item.id.toLowerCase() === 'prompt') return;
+
+        currentSchemaFields.push(item);
+        dynamicParams.appendChild(buildFieldElement(item));
+      });
+    });
+  }
+
+  function buildFieldElement(item) {
+    const wrapper = document.createElement('div');
+
+    const label = document.createElement('label');
+    label.className = 'block text-sm font-medium text-slate-300 mb-1';
+    label.htmlFor = `param-${item.id}`;
+    label.textContent = item.label || item.id;
+    if (item.required) {
+      const req = document.createElement('span');
+      req.className = 'text-red-400 ml-1';
+      req.textContent = '*';
+      label.appendChild(req);
+    }
+    wrapper.appendChild(label);
+
+    const baseClass = 'w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition';
+    let input;
+
+    const type = (item.type || '').toLowerCase();
+
+    if (Array.isArray(item.options) && item.options.length > 0) {
+      input = document.createElement('select');
+      input.className = baseClass;
+      item.options.forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt.value;
+        option.textContent = opt.label || opt.value;
+        input.appendChild(option);
+      });
+      if (item.default != null) input.value = item.default;
+    } else if (type === 'boolean' || type === 'checkbox') {
+      wrapper.className = 'flex items-center gap-2';
+      label.className = 'text-sm font-medium text-slate-300';
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'h-4 w-4 rounded border-slate-700 bg-slate-950 text-blue-500 focus:ring-blue-500';
+      input.checked = item.default === true || item.default === 'true';
+    } else if (type === 'number' || type === 'integer' || type === 'float') {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.className = baseClass;
+      if (item.min != null) input.min = item.min;
+      if (item.max != null) input.max = item.max;
+      if (item.step != null) input.step = item.step;
+      if (item.default != null) input.value = item.default;
+    } else if (type === 'textarea') {
+      input = document.createElement('textarea');
+      input.rows = 3;
+      input.className = baseClass;
+      if (item.default != null) input.value = item.default;
+    } else {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.className = baseClass;
+      if (item.default != null) input.value = item.default;
+    }
+
+    input.id = `param-${item.id}`;
+    input.name = item.id;
+    if (item.placeholder) input.placeholder = item.placeholder;
+    if (item.required && input.type !== 'checkbox') input.required = true;
+
+    wrapper.appendChild(input);
+
+    if (item.description || item.note) {
+      const help = document.createElement('p');
+      help.className = 'text-xs text-slate-500 mt-1';
+      help.textContent = item.description || item.note;
+      wrapper.appendChild(help);
+    }
+
+    return wrapper;
+  }
+
+  function collectParamValues() {
+    const params = {};
+
+    currentSchemaFields.forEach(item => {
+      const el = document.getElementById(`param-${item.id}`);
+      if (!el) return;
+
+      const type = (item.type || '').toLowerCase();
+
+      if (el.type === 'checkbox') {
+        params[item.id] = el.checked;
+      } else if (type === 'number' || type === 'integer' || type === 'float') {
+        if (el.value !== '') params[item.id] = Number(el.value);
+      } else if (el.value !== '') {
+        params[item.id] = el.value;
+      }
+    });
+
+    return params;
+  }
+
 
   function showBrowserView() {
     selectedModel = null;
@@ -309,7 +466,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: selectedModel.slug,
-          prompt: promptInput.value.trim()
+          prompt: promptInput.value.trim(),
+          ...collectParamValues()
         })
       });
 
