@@ -722,10 +722,7 @@
 
   function renderTaskDetails(data, downloads) {
     taskIdEl.textContent = data.taskId || (data.task && data.task.id) || '—';
-    taskCostEl.textContent = data.totalCostDisplay || formatTaskCost(
-      data.totalCost ?? (data.task && data.task.totalcost),
-      data.task && data.task.pexit
-    );
+    taskCostEl.textContent = data.totalCostDisplay || formatTaskCost(data.totalCost ?? (data.task && data.task.totalcost));
     downloadsList.innerHTML = '';
 
     if (downloads.length === 0) {
@@ -763,9 +760,9 @@
     mediaWrapper.innerHTML = '<p class="px-6 text-center text-sm text-slate-400">Generation completed. Preview unavailable, but the generated file links are ready below.</p>';
   }
 
-  function formatTaskCost(rawCost, pexit) {
+  function formatTaskCost(rawCost) {
     if (rawCost == null || rawCost === '') {
-      return pexit != null && String(pexit) === '0' ? '$0 (no charge)' : '—';
+      return '—';
     }
     const cost = rawCost == null || rawCost === '' ? '0' : String(rawCost);
     return cost === '0' ? '$0 (no charge)' : `$${cost}`;

@@ -40,10 +40,12 @@ const upload = multer({
 });
 
 function formatTaskCost(task) {
-  const amount = String(task?.totalcost ?? '0');
+  const amount = task?.totalcost == null || task.totalcost === ''
+    ? null
+    : String(task.totalcost);
   return {
     amount,
-    display: amount === '0' ? '$0 (no charge)' : `$${amount}`
+    display: amount == null ? '—' : (amount === '0' ? '$0 (no charge)' : `$${amount}`)
   };
 }
 
