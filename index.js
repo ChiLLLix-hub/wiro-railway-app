@@ -5,6 +5,12 @@ import { WiroClient } from '@wiro-ai/wiro-mcp/client';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Disable ETag-based conditional caching (304 Not Modified) globally.
+// Express enables weak ETags by default, which caused GET /models to be
+// answered with an empty 304 response on repeat requests, leaving the
+// frontend dropdown stuck without any models.
+app.disable('etag');
+
 // Enable CORS for your cPanel domain
 app.use(cors({
   origin: ['https://agromar.com.my', 'http://localhost:3000'],
@@ -29,6 +35,14 @@ const client = new WiroClient(
 // authenticated `/Tool/List` endpoint (POST + HMAC signature headers)
 // instead of the non-existent, unauthenticated `GET /v1/Models` route.
 app.get('/models', async (req, res) => {
+  // Prevent the browser/proxy from serving a cached or conditional (304 Not
+  // Modified, empty-body) response, which previously left the frontend
+  // dropdown stuck on its fallback hardcoded options.
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+
   try {
     const { search, categories, slugowner, sort, start, limit } = req.query;
 

@@ -108,7 +108,9 @@
       const modelSelect = document.getElementById('model');
     
       try {
-        const res = await fetch('https://wiro-railway-app-production.up.railway.app/models');
+        const res = await fetch('https://wiro-railway-app-production.up.railway.app/models', {
+          cache: 'no-store'
+        });
         
         if (!res.ok) {
           throw new Error(`Server returned status ${res.status}`);
@@ -136,6 +138,7 @@
         }
       } catch (err) {
         console.error('Could not fetch dynamic models from Railway backend:', err);
+        showError(`Could not load models from server: ${err.message}. Using default list.`);
       }
     });
 
