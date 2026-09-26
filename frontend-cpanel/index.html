@@ -282,12 +282,11 @@
 
     try {
       const res = await fetch(`${RAILWAY_SCHEMA_URL}?model=${encodeURIComponent(model.slug)}`, { cache: 'no-store' });
+      const payload = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        throw new Error(`Server returned status ${res.status}`);
+        throw new Error(payload.error || `Server returned status ${res.status}`);
       }
-
-      const payload = await res.json();
 
       if (requestToken !== schemaRequestToken) return; // A newer model was selected meanwhile
 
@@ -296,7 +295,10 @@
     } catch (err) {
       if (requestToken !== schemaRequestToken) return;
       console.error('Could not fetch model schema:', err);
-      paramsStatus.textContent = 'Could not load extra parameters for this model. Only the prompt will be sent.';
+      // Surface the backend's actual error (e.g. "Model ... was not found"
+      // or an upstream Wiro auth error) instead of a purely generic message,
+      // so misconfigurations are easier to spot than a silent fallback.
+      paramsStatus.textContent = `Could not load extra parameters for this model (${err.message}). Only the prompt will be sent.`;
       paramsStatus.classList.remove('hidden');
     }
   }

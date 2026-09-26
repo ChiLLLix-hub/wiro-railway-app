@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { WiroClient } from '@wiro-ai/wiro-mcp/client';
+import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -76,6 +76,55 @@ app.get('/models', async (req, res) => {
   }
 });
 
+// Resolve a model's full detail/parameter schema from Wiro.
+//
+// Some models returned by /Tool/List (search) only match /Tool/Detail when
+// queried with their *raw* `slugowner`/`slugproject` values - the
+// `cleanslugowner`/`cleanslugproject` fields (used to build the human/URL
+// friendly "owner/project" slug shown in the UI) can occasionally differ in
+// casing or punctuation from the raw slug the Detail endpoint expects. That
+// mismatch previously surfaced to users as a hard 404 ("Model ... was not
+// found") even though the model genuinely exists, with the frontend falling
+// back to the generic "Could not load extra parameters for this model" copy.
+// To make schema lookups resilient we first try the slug as given, and if
+// Wiro reports no match, fall back to searching for the model and retrying
+// Detail with its raw slug fields before giving up.
+async function resolveModelDetail(modelSlug) {
+  const tool = await lookupToolDetail(modelSlug);
+  if (tool) return tool;
+
+  const [ownerPart, ...rest] = modelSlug.split('/');
+  const projectPart = rest.join('/');
+  if (!ownerPart || !projectPart) return null;
+
+  const searchResult = await client.searchModels({ search: projectPart, limit: 50 });
+  if (!searchResult.result) return null;
+
+  const candidates = searchResult.tool || [];
+  const match = candidates.find(candidate => (
+    (candidate.cleanslugowner || '').toLowerCase() === ownerPart.toLowerCase()
+    && (candidate.cleanslugproject || '').toLowerCase() === projectPart.toLowerCase()
+  ));
+
+  if (!match || !match.slugowner || !match.slugproject) return null;
+
+  const rawSlug = `${match.slugowner}/${match.slugproject}`;
+  if (rawSlug === modelSlug) return null; // Already tried, still not found.
+
+  return lookupToolDetail(rawSlug);
+}
+
+async function lookupToolDetail(modelSlug) {
+  const result = await client.getModelSchema(modelSlug);
+
+  if (!result.result) {
+    const message = result.errors?.map(e => e.message).join(', ') || 'Failed to fetch model schema.';
+    throw Object.assign(new Error(message), { status: 502 });
+  }
+
+  return (result.tool || [])[0] || null;
+}
+
 // Model Schema Endpoint
 // Different models expect different (often required) parameters -
 // e.g. bytedance/seedream-v4 requires `size`, `maxImages` and `watermark`,
@@ -96,17 +145,18 @@ app.get('/models/schema', async (req, res) => {
       return res.status(400).json({ error: 'Query parameter "model" is required (e.g. ?model=owner/project).' });
     }
 
-    const result = await client.getModelSchema(String(model));
+    // Trim stray whitespace/slashes - a trailing slash (e.g. from a
+    // copy-pasted URL) turns "owner/project" into "owner/project/" which
+    // getModelSchema() would otherwise happily send to /Tool/Detail as
+    // slugproject="project/", causing Wiro to report the model as not found.
+    let requestedModel = String(model).trim();
+    while (requestedModel.startsWith('/')) requestedModel = requestedModel.slice(1);
+    while (requestedModel.endsWith('/')) requestedModel = requestedModel.slice(0, -1);
 
-    if (!result.result) {
-      const message = result.errors?.map(e => e.message).join(', ') || 'Failed to fetch model schema.';
-      return res.status(502).json({ error: message });
-    }
-
-    const tool = (result.tool || [])[0];
+    const tool = await resolveModelDetail(requestedModel);
 
     if (!tool) {
-      return res.status(404).json({ error: `Model "${model}" was not found.` });
+      return res.status(404).json({ error: `Model "${requestedModel}" was not found.` });
     }
 
     const parameters = (tool.parameters || []).map(group => ({
@@ -129,13 +179,20 @@ app.get('/models/schema', async (req, res) => {
     }));
 
     return res.json({
-      slug: model,
+      slug: requestedModel,
       title: tool.title,
       description: tool.seodescription || tool.description || '',
       parameters
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (error instanceof WiroApiError) {
+      // Surface Wiro's real upstream status/message (e.g. 401 for bad
+      // credentials, 404 for a genuinely unknown model) instead of masking
+      // every failure behind a generic 500/404, which made this class of
+      // issue hard to diagnose from the frontend's fallback message alone.
+      return res.status(error.status).json({ error: error.message });
+    }
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 
