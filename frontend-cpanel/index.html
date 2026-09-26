@@ -86,6 +86,19 @@
       </div>
 
       <!-- Output Preview Area -->
+      <div id="task-summary-container" class="hidden space-y-4 pt-2">
+        <div class="grid gap-3 md:grid-cols-2 text-sm">
+          <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
+            <p class="text-xs uppercase tracking-wider text-slate-500">Task ID</p>
+            <p id="task-id" class="mt-2 font-mono text-slate-200 break-all">—</p>
+          </div>
+          <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
+            <p class="text-xs uppercase tracking-wider text-slate-500">Generation Cost</p>
+            <p id="task-cost" class="mt-2 text-slate-200">—</p>
+          </div>
+        </div>
+      </div>
+
       <div id="output-container" class="hidden space-y-4 pt-2">
         <div class="flex justify-between items-center">
           <h2 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Result</h2>
@@ -100,17 +113,6 @@
           <a id="download-link" href="" target="_blank" class="text-blue-400 hover:underline">
             Open Full File ↗
           </a>
-        </div>
-
-        <div class="grid gap-3 md:grid-cols-2 text-sm">
-          <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
-            <p class="text-xs uppercase tracking-wider text-slate-500">Task ID</p>
-            <p id="task-id" class="mt-2 font-mono text-slate-200 break-all">—</p>
-          </div>
-          <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
-            <p class="text-xs uppercase tracking-wider text-slate-500">Generation Cost</p>
-            <p id="task-cost" class="mt-2 text-slate-200">—</p>
-          </div>
         </div>
 
         <div class="space-y-2">
@@ -162,6 +164,7 @@
   const spinner = document.getElementById('spinner');
   const errorBox = document.getElementById('error-box');
   const errorMessage = document.getElementById('error-message');
+  const taskSummaryContainer = document.getElementById('task-summary-container');
   const outputContainer = document.getElementById('output-container');
   const mediaWrapper = document.getElementById('media-wrapper');
   const downloadLink = document.getElementById('download-link');
@@ -603,6 +606,7 @@
     }
 
     errorBox.classList.add('hidden');
+    taskSummaryContainer.classList.add('hidden');
     outputContainer.classList.add('hidden');
     resetOutputDetails();
 
@@ -648,7 +652,7 @@
 
         if (mediaUrl || downloads.length > 0) {
           outputContainer.classList.remove('hidden');
-        } else {
+        } else if (taskSummaryContainer.classList.contains('hidden')) {
           showError('Generation finished, but no media URL could be extracted.');
         }
       } else {
@@ -723,6 +727,7 @@
   function renderTaskDetails(data, downloads) {
     taskIdEl.textContent = data.taskId || (data.task && data.task.id) || '—';
     taskCostEl.textContent = data.totalCostDisplay || formatTaskCost(data.totalCost ?? (data.task && data.task.totalcost));
+    taskSummaryContainer.classList.toggle('hidden', taskIdEl.textContent === '—' && taskCostEl.textContent === '—');
     downloadsList.innerHTML = '';
 
     if (downloads.length === 0) {
@@ -751,6 +756,7 @@
     taskIdEl.textContent = '—';
     taskCostEl.textContent = '—';
     downloadsList.innerHTML = '';
+    taskSummaryContainer.classList.add('hidden');
     downloadLink.classList.add('hidden');
     downloadLink.removeAttribute('href');
     mediaWrapper.innerHTML = '';
@@ -764,7 +770,7 @@
     if (rawCost == null || rawCost === '') {
       return '—';
     }
-    const cost = rawCost == null || rawCost === '' ? '0' : String(rawCost);
+    const cost = String(rawCost);
     return cost === '0' ? '$0 (no charge)' : `$${cost}`;
   }
 
