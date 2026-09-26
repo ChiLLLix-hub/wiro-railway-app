@@ -122,11 +122,13 @@
     
           modelList.forEach(m => {
             const option = document.createElement('option');
-            // Wiro models use owner/slug identifiers e.g. "alibaba/wan-2-7-image"
-            option.value = m.slug ? `${m.owner}/${m.slug}` : (m.id || m.name);
-            
-            const name = m.name || m.title || m.slug || m.id;
-            const category = m.category || m.type || 'Model';
+            // Wiro models use "owner/project" slugs e.g. "alibaba/wan-2-7-image"
+            option.value = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name));
+    
+            const name = m.title || m.name || m.slug || m.id;
+            const category = Array.isArray(m.categories) && m.categories.length > 0
+              ? m.categories[0]
+              : (m.category || m.type || 'Model');
     
             option.textContent = `${name} (${category})`;
             modelSelect.appendChild(option);
