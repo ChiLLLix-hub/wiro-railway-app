@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import multer from 'multer';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 
 const app = express();
@@ -29,6 +30,14 @@ const client = new WiroClient(
   process.env.WIRO_API_KEY,
   process.env.WIRO_API_SECRET
 );
+
+// In-memory storage keeps uploaded reference media (images/video/audio) in
+// RAM only long enough to relay it to Wiro's File/Upload endpoint - nothing
+// is written to disk on the Railway instance.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 100 * 1024 * 1024 } // 100MB per file, matches typical Wiro reference-media limits
+});
 
 // Dynamic models list endpoint
 // Uses the Wiro SDK's searchModels() helper, which correctly calls the
@@ -196,6 +205,61 @@ app.get('/models/schema', async (req, res) => {
   }
 });
 
+// Reference Media Upload Endpoint
+//
+// Model parameters of type `fileinput`/`multifileinput`/`combinefileinput`
+// (e.g. `reference_images`, `first_frame_image`) expect a Wiro-hosted URL,
+// not a raw browser File - the frontend can't send an in-browser file
+// straight to /generate as JSON. This endpoint accepts the actual file the
+// user picked (multipart/form-data), relays it to Wiro's `/File/Upload`
+// endpoint using our server-side credentials, and returns the resulting
+// hosted URL so the frontend can attach it to the run parameters.
+app.post('/upload', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded. Attach it as multipart/form-data field "file".' });
+    }
+
+    const formData = new FormData();
+    const blob = new Blob([req.file.buffer], { type: req.file.mimetype || 'application/octet-stream' });
+    formData.append('file', blob, req.file.originalname || 'upload');
+
+    const uploadUrl = `${client.baseUrl}/File/Upload`;
+    // Reuse the SDK's own HMAC auth headers so this endpoint stays in sync
+    // with however WiroClient authenticates every other request.
+    const headers = client.getAuthHeaders(new URL(uploadUrl).pathname);
+    delete headers['Content-Type']; // Let fetch set the multipart boundary itself.
+
+    const response = await fetch(uploadUrl, { method: 'POST', headers, body: formData });
+    const text = await response.text();
+
+    if (!response.ok) {
+      return res.status(502).json({ error: `Wiro upload failed (${response.status}): ${text}` });
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return res.status(502).json({ error: 'Invalid response from Wiro upload service.' });
+    }
+
+    if (!payload.result || !payload.list?.length) {
+      const message = payload.errors?.map(e => e.message).join(', ') || 'Upload failed.';
+      return res.status(502).json({ error: message });
+    }
+
+    const file = payload.list[0];
+    if (!file.url) {
+      return res.status(502).json({ error: 'Upload succeeded but no reusable file URL was returned.' });
+    }
+
+    return res.json({ url: file.url, name: file.name, contentType: file.contenttype, size: file.size });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message });
+  }
+});
+
 // Dynamic Model Execution Endpoint
 app.post('/generate', async (req, res) => {
   try {
@@ -227,9 +291,19 @@ app.post('/generate', async (req, res) => {
     const task = result.tasklist[0];
 
     if (task && task.pexit === '0') {
+      // `task.outputs` is Wiro's structured output list (each item has a
+      // reliable `.url` + `.contenttype`), unlike `task.debugoutput` which
+      // is a free-form debug string that doesn't always contain a directly
+      // usable media URL. Surface the first output with a URL explicitly so
+      // the frontend doesn't have to guess-parse debugoutput.
+      const outputs = task.outputs || [];
+      const mediaOutput = outputs.find(o => o && o.url) || null;
+
       return res.json({
         success: true,
         output: task.debugoutput,
+        mediaUrl: mediaOutput ? mediaOutput.url : null,
+        outputs,
         task: task
       });
     } else {
