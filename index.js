@@ -19,6 +19,21 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date() });
 });
 
+// 👇 PASTE IT HERE (Dynamic models list endpoint)
+app.get('/models', async (req, res) => {
+  try {
+    const response = await fetch('https://api.wiro.ai/v1/models', {
+      headers: {
+        'Authorization': `Bearer ${process.env.WIRO_API_KEY}`
+      }
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const client = new WiroClient(
   process.env.WIRO_API_KEY,
   process.env.WIRO_API_SECRET
