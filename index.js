@@ -24,15 +24,25 @@ const client = new WiroClient(
   process.env.WIRO_API_SECRET
 );
 
+// Dynamic Model Execution Endpoint
 app.post('/generate', async (req, res) => {
   try {
-    const { prompt } = req.body;
+    const { model, prompt, size, duration, aspect_ratio } = req.body;
 
-    const run = await client.runModel('alibaba/wan-2-7-image', {
-      prompt: prompt || 'A cinematic image set following the woman…',
-      size: '1K',
-      samples: 1
-    });
+    // Default to Wan 2.7 Image if no model is provided
+    const selectedModel = model || 'alibaba/wan-2-7-image';
+
+    // Construct options payload dynamically
+    const options = {
+      prompt: prompt || 'A cinematic studio render...'
+    };
+
+    if (size) options.size = size;
+    if (duration) options.duration = duration;
+    if (aspect_ratio) options.aspect_ratio = aspect_ratio;
+
+    // Run whatever model was requested by the client
+    const run = await client.runModel(selectedModel, options);
 
     if (!run || !run.result) {
       return res.status(500).json({ error: run?.errors || 'Model execution failed' });
@@ -48,7 +58,7 @@ app.post('/generate', async (req, res) => {
         task: task
       });
     } else {
-      return res.status(500).json({ success: false, error: 'Task failed to generate.' });
+      return res.status(500).json({ success: false, error: 'Task failed to generate output.' });
     }
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
