@@ -117,7 +117,13 @@ app.get('/models', async (req, res) => {
       // /Tool/List response - lets the frontend render a real preview
       // image per model instead of a text-only card.
       image: model.image || null,
-      samples: Array.isArray(model.samples) ? model.samples : []
+      samples: Array.isArray(model.samples) ? model.samples : [],
+      tags: Array.isArray(model.tags) ? model.tags : [],
+      // Raw pricing signals from Wiro so the frontend can show a cost hint
+      // without hardcoding per-model prices.
+      dynamicprice: model.dynamicprice || null,
+      cps: model.cps || null,
+      approximatelycost: model.approximatelycost || null
     }));
 
     return res.json({
