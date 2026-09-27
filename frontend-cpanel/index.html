@@ -582,12 +582,18 @@
           uploaded.push(result.value);
           return;
         }
+        if (result.reason && result.reason.name === 'AbortError') {
+          return;
+        }
         const fileName = selected[index] && selected[index].name ? selected[index].name : `File ${index + 1}`;
         const message = result.reason && result.reason.message ? result.reason.message : 'Upload failed';
         failures.push(`${fileName}: ${message}`);
       });
 
       if (fileUploadRequestTokens[item.id] !== requestToken) {
+        if (fileUploadAbortControllers[item.id] === abortController) {
+          delete fileUploadAbortControllers[item.id];
+        }
         return;
       }
 
@@ -598,6 +604,9 @@
       };
       renderUploadState();
       input.value = '';
+      if (fileUploadAbortControllers[item.id] === abortController) {
+        delete fileUploadAbortControllers[item.id];
+      }
     });
 
     wrapper.appendChild(input);
