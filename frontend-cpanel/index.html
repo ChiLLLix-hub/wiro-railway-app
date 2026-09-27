@@ -603,7 +603,7 @@
       fileUploads[item.id] = {
         uploading: false,
         error: failures.length > 0 ? failures.join(' | ') : null,
-        files: isMulti ? [...currentFiles, ...uploaded] : (uploaded[0] ? [uploaded[0]] : currentFiles)
+        files: isMulti ? [...currentFiles, ...uploaded] : (uploaded[0] ? [uploaded[0]] : [])
       };
       renderUploadState();
       input.value = '';
