@@ -74,16 +74,30 @@ app.get('/models', async (req, res) => {
   res.set('Expires', '0');
   res.set('Surrogate-Control', 'no-store');
 
+  // Wiro's own /Tool/List `sort` values (see wiro-mcp's search-models.js
+  // zod enum). Anything else falls back to 'relevance' rather than being
+  // forwarded as-is, since an invalid value causes Wiro to error out.
+  const ALLOWED_SORTS = ['relevance', 'time', 'ratedusercount', 'commentcount', 'averagepoint'];
+
   try {
     const { search, categories, slugowner, sort, start, limit } = req.query;
+    const requestedSort = String(sort || '').trim();
+
+    // Cap the page size so a client-supplied `limit` can't force us to pull
+    // (and re-serve) the entire 500+ model catalog in one response - the
+    // whole point of paging is a small, fast payload per page.
+    const requestedLimit = limit ? Number(limit) : 20;
+    const safeLimit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 20;
+    const requestedStart = start ? Number(start) : 0;
+    const safeStart = Number.isFinite(requestedStart) && requestedStart >= 0 ? requestedStart : 0;
 
     const result = await client.searchModels({
       search: search || undefined,
       categories: categories ? String(categories).split(',') : undefined,
       slugowner: slugowner || undefined,
-      sort: sort || 'relevance',
-      start: start ? Number(start) : 0,
-      limit: limit ? Number(limit) : 100
+      sort: ALLOWED_SORTS.includes(requestedSort) ? requestedSort : 'relevance',
+      start: safeStart,
+      limit: safeLimit
     });
 
     if (!result.result) {
@@ -98,10 +112,20 @@ app.get('/models', async (req, res) => {
       name: model.title || `${model.cleanslugowner}/${model.cleanslugproject}`,
       title: model.title,
       description: model.seodescription || model.description || '',
-      categories: (model.categories || []).filter(c => c !== 'tool')
+      categories: (model.categories || []).filter(c => c !== 'tool'),
+      // Cover thumbnail + example output URLs, straight from Wiro's
+      // /Tool/List response - lets the frontend render a real preview
+      // image per model instead of a text-only card.
+      image: model.image || null,
+      samples: Array.isArray(model.samples) ? model.samples : []
     }));
 
-    return res.json({ data: models, total: Number(result.total) || models.length });
+    return res.json({
+      data: models,
+      total: Number(result.total) || models.length,
+      start: safeStart,
+      limit: safeLimit
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

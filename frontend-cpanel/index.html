@@ -32,9 +32,34 @@
         class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
       >
 
+      <div class="flex flex-wrap items-center gap-2">
+        <div id="category-filters" class="flex flex-wrap gap-2"></div>
+        <select
+          id="model-sort"
+          class="ml-auto bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+        >
+          <option value="relevance">Sort: Relevance</option>
+          <option value="time">Sort: Newest</option>
+          <option value="ratedusercount">Sort: Most Rated</option>
+          <option value="commentcount">Sort: Most Comments</option>
+          <option value="averagepoint">Sort: Highest Rated</option>
+        </select>
+      </div>
+
       <div id="models-status" class="text-slate-400 text-sm py-2">Loading models…</div>
 
       <div id="models-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+
+      <div class="flex flex-col items-center gap-2 pt-2">
+        <p id="models-count" class="text-slate-500 text-xs hidden"></p>
+        <button
+          id="load-more-btn"
+          type="button"
+          class="hidden bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium py-2 px-4 rounded-xl transition disabled:opacity-50"
+        >
+          Load more models ↓
+        </button>
+      </div>
     </div>
 
     <!-- ==================== MODEL RUN VIEW ==================== -->
@@ -176,6 +201,10 @@
   const modelSearch = document.getElementById('model-search');
   const modelsStatus = document.getElementById('models-status');
   const modelsGrid = document.getElementById('models-grid');
+  const categoryFiltersEl = document.getElementById('category-filters');
+  const modelSortSelect = document.getElementById('model-sort');
+  const loadMoreBtn = document.getElementById('load-more-btn');
+  const modelsCountEl = document.getElementById('models-count');
 
   // Model run elements
   const modelTitleEl = document.getElementById('model-title');
@@ -198,8 +227,14 @@
   const dynamicParams = document.getElementById('dynamic-params');
   const paramsStatus = document.getElementById('params-status');
 
+  const PAGE_SIZE = 20; // Matches Wiro's own model catalog page size.
+
+  // `allModels` now only holds the models actually loaded so far (current
+  // page(s)), not the full 500+ model catalog - browsing/search/sort/filter
+  // are all served by the backend per-page instead of being filtered
+  // client-side over one large cached batch.
   let allModels = [];
-  let selectedModel = null; // { slug, title, description, categories }
+  let selectedModel = null; // { slug, title, description, categories, image }
   let currentSchemaFields = []; // Flattened list of { id, type, ... } for the selected model
   let schemaRequestToken = 0; // Guards against stale/out-of-order schema responses
   // Uploaded reference-media state, keyed by param id:
@@ -208,33 +243,148 @@
   let fileUploadRequestTokens = {};
   let fileUploadAbortControllers = {};
 
+  // Model Browser paging/filter/sort state.
+  let modelsRequestToken = 0; // Guards against out-of-order /models responses
+  let currentStart = 0;
+  let currentTotal = 0;
+  let currentSearchTerm = '';
+  let currentCategories = new Set();
+  let currentSort = 'relevance';
+  let knownCategories = new Set(); // Accumulated from every page loaded so far
+  let searchDebounceTimer = null;
+  let isLoadingModels = false;
+
   // ------------------------------------------------------------------
-  // Model Browser: fetch, render, search, and routing
+  // Model Browser: fetch, render, search, filter, sort, and routing
   // ------------------------------------------------------------------
 
-  async function loadModels() {
+  function buildModelsUrl({ start, append }) {
+    const url = new URL(RAILWAY_MODELS_URL);
+    url.searchParams.set('start', String(start));
+    url.searchParams.set('limit', String(PAGE_SIZE));
+    if (currentSearchTerm) url.searchParams.set('search', currentSearchTerm);
+    if (currentCategories.size > 0) url.searchParams.set('categories', [...currentCategories].join(','));
+    if (currentSort) url.searchParams.set('sort', currentSort);
+    return url;
+  }
+
+  // Fetches one page of models from the backend. `append: true` adds to the
+  // existing grid ("Load more"); `append: false` replaces it (new
+  // search/filter/sort, or the initial load).
+  async function fetchModelsPage({ start = 0, append = false } = {}) {
+    const requestToken = ++modelsRequestToken;
+    isLoadingModels = true;
+    updateLoadMoreButton();
+
+    if (!append) {
+      modelsStatus.textContent = 'Loading models…';
+      modelsStatus.classList.remove('hidden');
+    }
+
     try {
-      const res = await fetch(RAILWAY_MODELS_URL, { cache: 'no-store' });
+      const url = buildModelsUrl({ start, append });
+      const res = await fetch(url, { cache: 'no-store' });
 
       if (!res.ok) {
         throw new Error(`Server returned status ${res.status}`);
       }
 
       const payload = await res.json();
-      const modelList = Array.isArray(payload) ? payload : (payload.data || []);
+      if (requestToken !== modelsRequestToken) return; // Stale response, ignore.
 
-      allModels = (modelList.length > 0 ? modelList : FALLBACK_MODELS).map(normalizeModel);
+      const modelList = Array.isArray(payload) ? payload : (payload.data || []);
+      const normalized = modelList.map(normalizeModel);
+
+      if (append) {
+        allModels = allModels.concat(normalized);
+      } else {
+        allModels = normalized.length > 0 ? normalized : (start === 0 ? FALLBACK_MODELS.map(normalizeModel) : []);
+      }
+
+      currentStart = start + modelList.length;
+      currentTotal = Number(payload.total) || allModels.length;
+
+      normalized.forEach(m => m.categories.forEach(c => knownCategories.add(c)));
+      renderCategoryFilters();
+
       modelsStatus.classList.add('hidden');
+      renderModelGrid(allModels);
+      updateModelsCount();
+      handleRouteFromHash();
     } catch (err) {
       console.error('Could not fetch dynamic models from Railway backend:', err);
-      allModels = FALLBACK_MODELS.map(normalizeModel);
-      modelsStatus.textContent = `Could not load live models from server (${err.message}). Showing default list.`;
+      if (!append && start === 0) {
+        allModels = FALLBACK_MODELS.map(normalizeModel);
+        currentStart = allModels.length;
+        currentTotal = allModels.length;
+        renderModelGrid(allModels);
+        updateModelsCount();
+      }
+      modelsStatus.textContent = `Could not load live models from server (${err.message}).${!append && start === 0 ? ' Showing default list.' : ''}`;
       modelsStatus.classList.remove('hidden');
+    } finally {
+      isLoadingModels = false;
+      updateLoadMoreButton();
     }
-
-    renderModelGrid(allModels);
-    handleRouteFromHash();
   }
+
+  function loadModels() {
+    currentStart = 0;
+    currentTotal = 0;
+    return fetchModelsPage({ start: 0, append: false });
+  }
+
+  function updateModelsCount() {
+    if (!allModels.length) {
+      modelsCountEl.classList.add('hidden');
+      return;
+    }
+    modelsCountEl.textContent = `Showing ${allModels.length} of ${currentTotal} models`;
+    modelsCountEl.classList.remove('hidden');
+  }
+
+  function updateLoadMoreButton() {
+    const hasMore = currentStart < currentTotal;
+    loadMoreBtn.classList.toggle('hidden', !hasMore);
+    loadMoreBtn.disabled = isLoadingModels;
+    loadMoreBtn.textContent = isLoadingModels ? 'Loading…' : 'Load more models ↓';
+  }
+
+  loadMoreBtn.addEventListener('click', () => {
+    if (isLoadingModels) return;
+    fetchModelsPage({ start: currentStart, append: true });
+  });
+
+  function renderCategoryFilters() {
+    const activeCategories = new Set(currentCategories);
+    categoryFiltersEl.innerHTML = '';
+
+    [...knownCategories].sort().forEach(category => {
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      const isActive = activeCategories.has(category);
+      pill.className = `text-xs font-medium rounded-full px-3 py-1.5 border transition ${
+        isActive
+          ? 'bg-blue-600 border-blue-500 text-white'
+          : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-blue-500'
+      }`;
+      pill.textContent = category;
+      pill.addEventListener('click', () => {
+        if (currentCategories.has(category)) {
+          currentCategories.delete(category);
+        } else {
+          currentCategories.add(category);
+        }
+        loadModels();
+      });
+      categoryFiltersEl.appendChild(pill);
+    });
+  }
+
+  modelSortSelect.addEventListener('change', () => {
+    currentSort = modelSortSelect.value || 'relevance';
+    loadModels();
+  });
 
   function normalizeModel(m) {
     const slug = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name || ''));
@@ -244,7 +394,8 @@
       description: m.description || '',
       categories: Array.isArray(m.categories) && m.categories.length > 0
         ? m.categories
-        : [m.category || m.type || 'Model']
+        : [m.category || m.type || 'Model'],
+      image: m.image || null
     };
   }
 
@@ -262,14 +413,45 @@
     models.forEach(model => {
       const card = document.createElement('button');
       card.type = 'button';
-      card.className = 'text-left bg-slate-950 border border-slate-800 rounded-xl p-4 hover:border-blue-500 hover:bg-slate-800/50 transition focus:outline-none focus:ring-2 focus:ring-blue-500';
-      card.innerHTML = `
+      card.className = 'text-left bg-slate-950 border border-slate-800 rounded-xl overflow-hidden hover:border-blue-500 hover:bg-slate-800/50 transition focus:outline-none focus:ring-2 focus:ring-blue-500';
+
+      const thumbWrapper = document.createElement('div');
+      thumbWrapper.className = 'w-full aspect-video bg-slate-900 flex items-center justify-center overflow-hidden';
+
+      if (model.image) {
+        const img = document.createElement('img');
+        img.src = model.image;
+        img.alt = model.title || model.slug;
+        img.loading = 'lazy';
+        img.className = 'w-full h-full object-cover';
+        img.addEventListener('error', () => {
+          img.remove();
+          thumbWrapper.appendChild(createThumbnailPlaceholder());
+        }, { once: true });
+        thumbWrapper.appendChild(img);
+      } else {
+        thumbWrapper.appendChild(createThumbnailPlaceholder());
+      }
+
+      const body = document.createElement('div');
+      body.className = 'p-4';
+      body.innerHTML = `
         <h3 class="font-semibold text-slate-100 text-sm mb-2">${escapeHtml(model.title)}</h3>
         <code class="inline-block bg-slate-800 text-blue-300 text-xs rounded px-2 py-1 break-all">${escapeHtml(model.slug)}</code>
       `;
+
+      card.appendChild(thumbWrapper);
+      card.appendChild(body);
       card.addEventListener('click', () => selectModel(model));
       modelsGrid.appendChild(card);
     });
+  }
+
+  function createThumbnailPlaceholder() {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'w-full h-full flex items-center justify-center text-slate-600 text-xs';
+    placeholder.textContent = 'No preview';
+    return placeholder;
   }
 
   function escapeHtml(str) {
@@ -279,20 +461,13 @@
   }
 
   modelSearch.addEventListener('input', () => {
-    const term = modelSearch.value.trim().toLowerCase();
+    clearTimeout(searchDebounceTimer);
+    const term = modelSearch.value.trim();
 
-    if (!term) {
-      renderModelGrid(allModels);
-      return;
-    }
-
-    const filtered = allModels.filter(m =>
-      m.title.toLowerCase().includes(term)
-      || m.slug.toLowerCase().includes(term)
-      || m.categories.some(c => c.toLowerCase().includes(term))
-    );
-
-    renderModelGrid(filtered);
+    searchDebounceTimer = setTimeout(() => {
+      currentSearchTerm = term;
+      loadModels();
+    }, 300);
   });
 
   // ------------------------------------------------------------------
@@ -823,6 +998,37 @@
     if (model) {
       selectedModel = model;
       showModelView(model);
+      return;
+    }
+
+    // Deep-linked model isn't in the pages loaded so far (paging replaced
+    // the old "fetch everything once" approach) - look it up directly
+    // instead of silently doing nothing.
+    resolveModelBySlug(slug);
+  }
+
+  async function resolveModelBySlug(slug) {
+    const [, ...rest] = slug.split('/');
+    const projectPart = rest.join('/') || slug;
+
+    try {
+      const url = new URL(RAILWAY_MODELS_URL);
+      url.searchParams.set('search', projectPart);
+      url.searchParams.set('limit', '50');
+
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Server returned status ${res.status}`);
+
+      const payload = await res.json();
+      const modelList = Array.isArray(payload) ? payload : (payload.data || []);
+      const match = modelList.map(normalizeModel).find(m => m.slug === slug);
+
+      if (match) {
+        selectedModel = match;
+        showModelView(match);
+      }
+    } catch (err) {
+      console.error('Could not resolve deep-linked model:', slug, err);
     }
   }
 
