@@ -539,21 +539,27 @@
       status.className = 'text-xs text-blue-400 mt-1';
       renderUploadState();
 
-      try {
-        const uploaded = await Promise.all(selected.map(file => uploadReferenceFile(file)));
+      const settled = await Promise.allSettled(selected.map(file => uploadReferenceFile(file)));
+      const uploaded = [];
+      const failures = [];
 
-        fileUploads[item.id] = {
-          uploading: false,
-          error: null,
-          files: isMulti ? [...currentFiles, ...uploaded] : uploaded.slice(0, 1)
-        };
-        renderUploadState();
-      } catch (err) {
-        fileUploads[item.id] = { uploading: false, error: err.message, files: currentFiles };
-        renderUploadState();
-      } finally {
-        input.value = '';
-      }
+      settled.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          uploaded.push(result.value);
+          return;
+        }
+        const fileName = selected[index] && selected[index].name ? selected[index].name : `File ${index + 1}`;
+        const message = result.reason && result.reason.message ? result.reason.message : 'Upload failed';
+        failures.push(`${fileName}: ${message}`);
+      });
+
+      fileUploads[item.id] = {
+        uploading: false,
+        error: failures.length > 0 ? failures.join(' | ') : null,
+        files: isMulti ? [...currentFiles, ...uploaded] : (uploaded[0] ? [uploaded[0]] : currentFiles)
+      };
+      renderUploadState();
+      input.value = '';
     });
 
     wrapper.appendChild(input);
@@ -571,17 +577,9 @@
   }
 
   function getUploadEndpointCandidates() {
-    let useSameOrigin = false;
-    try {
-      useSameOrigin = new URL(BACKEND_BASE_URL || '', window.location.origin).origin === window.location.origin;
-    } catch {
-      useSameOrigin = false;
-    }
-
     return [...new Set([
       RAILWAY_UPLOAD_URL,
-      `${BACKEND_BASE_URL}/api/upload`,
-      ...(useSameOrigin ? [`${window.location.origin}/upload`, `${window.location.origin}/api/upload`, '/upload', '/api/upload'] : [])
+      `${BACKEND_BASE_URL}/api/upload`
     ])];
   }
 
