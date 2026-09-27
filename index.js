@@ -39,14 +39,38 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB per file, matches typical Wiro reference-media limits
 });
 
+// Optional currency conversion for the displayed cost. Set CURRENCY_EXCHANGE
+// (e.g. 4.5) in Railway's environment variables to multiply Wiro's USD
+// totalcost into another currency - the multiplier itself can bake in a
+// margin/profit on top of the real exchange rate if desired. Set
+// CURRENCY_SYMBOL to change the displayed label (defaults to "RM").
+const CURRENCY_EXCHANGE_RATE = Number(process.env.CURRENCY_EXCHANGE);
+const CURRENCY_SYMBOL = process.env.CURRENCY_SYMBOL || 'RM';
+
 function formatTaskCost(task) {
   const amount = task?.totalcost == null || task.totalcost === ''
     ? null
     : String(task.totalcost);
-  return {
+  const result = {
     amount,
-    display: amount == null ? '—' : (amount === '0' ? '$0 (no charge)' : `$${amount}`)
+    display: amount == null ? '—' : (amount === '0' ? '$0 (no charge)' : `$${amount}`),
+    convertedAmount: null,
+    convertedDisplay: null,
+    currencySymbol: CURRENCY_SYMBOL,
+    exchangeRate: Number.isFinite(CURRENCY_EXCHANGE_RATE) && CURRENCY_EXCHANGE_RATE > 0 ? CURRENCY_EXCHANGE_RATE : null
   };
+
+  if (amount != null && result.exchangeRate != null) {
+    const converted = Number(amount) * result.exchangeRate;
+    if (Number.isFinite(converted)) {
+      result.convertedAmount = converted;
+      result.convertedDisplay = converted === 0
+        ? `${CURRENCY_SYMBOL} 0 (no charge)`
+        : `${CURRENCY_SYMBOL} ${converted.toFixed(2)}`;
+    }
+  }
+
+  return result;
 }
 
 function normalizeTaskOutputs(outputs = []) {
@@ -363,6 +387,10 @@ app.post('/generate', async (req, res) => {
         taskId: task.id,
         totalCost: taskCost.amount,
         totalCostDisplay: taskCost.display,
+        convertedCost: taskCost.convertedAmount,
+        convertedCostDisplay: taskCost.convertedDisplay,
+        currencySymbol: taskCost.currencySymbol,
+        exchangeRate: taskCost.exchangeRate,
         downloads: downloadableOutputs,
         outputs,
         task: task

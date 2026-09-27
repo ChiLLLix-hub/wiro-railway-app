@@ -135,6 +135,7 @@
           <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
             <p class="text-xs uppercase tracking-wider text-slate-500">Generation Cost</p>
             <p id="task-cost" class="mt-2 text-slate-200">—</p>
+            <p id="task-cost-converted" class="mt-1 text-xs text-slate-500 hidden"></p>
           </div>
         </div>
       </div>
@@ -239,6 +240,7 @@
   const downloadLink = document.getElementById('download-link');
   const taskIdEl = document.getElementById('task-id');
   const taskCostEl = document.getElementById('task-cost');
+  const taskCostConvertedEl = document.getElementById('task-cost-converted');
   const downloadsList = document.getElementById('downloads-list');
   const dynamicParams = document.getElementById('dynamic-params');
   const paramsStatus = document.getElementById('params-status');
@@ -1315,6 +1317,15 @@
   function renderTaskDetails(data, downloads) {
     taskIdEl.textContent = data.taskId || (data.task && data.task.id) || '—';
     taskCostEl.textContent = data.totalCostDisplay ?? formatTaskCost(data.totalCost ?? (data.task && data.task.totalcost));
+
+    if (data.convertedCostDisplay) {
+      taskCostConvertedEl.textContent = `≈ ${data.convertedCostDisplay}${data.exchangeRate ? ` (rate ${data.exchangeRate})` : ''}`;
+      taskCostConvertedEl.classList.remove('hidden');
+    } else {
+      taskCostConvertedEl.textContent = '';
+      taskCostConvertedEl.classList.add('hidden');
+    }
+
     taskSummaryContainer.classList.toggle(
       'hidden',
       taskIdEl.textContent === '—' && taskCostEl.textContent === '—' && downloads.length === 0
@@ -1346,6 +1357,8 @@
   function resetOutputDetails() {
     taskIdEl.textContent = '—';
     taskCostEl.textContent = '—';
+    taskCostConvertedEl.textContent = '';
+    taskCostConvertedEl.classList.add('hidden');
     downloadsList.innerHTML = '';
     taskSummaryContainer.classList.add('hidden');
     downloadLink.classList.add('hidden');
