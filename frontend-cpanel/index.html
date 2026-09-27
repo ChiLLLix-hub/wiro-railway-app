@@ -139,8 +139,18 @@
   // everything else falls back to text/number/select inputs.
   const FILE_PARAM_TYPES = ['fileinput', 'multifileinput', 'combinefileinput'];
 
+  function isBackendSameOrigin() {
+    try {
+      return new URL(BACKEND_BASE_URL || '', window.location.origin).origin === window.location.origin;
+    } catch {
+      return false;
+    }
+  }
+
   function getBackendFetchCredentials() {
-    return CUSTOM_CREDENTIALS_MODE === 'include' ? 'include' : 'same-origin';
+    return CUSTOM_CREDENTIALS_MODE === 'include' && isBackendSameOrigin()
+      ? 'include'
+      : 'same-origin';
   }
 
   const FALLBACK_MODELS = [
