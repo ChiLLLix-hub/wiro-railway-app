@@ -457,7 +457,12 @@
     const previews = document.createElement('div');
     previews.className = 'mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3';
 
-    fileUploads[item.id] = { uploading: false, error: null, files: [] };
+    const existingUploadState = fileUploads[item.id];
+    fileUploads[item.id] = {
+      uploading: false,
+      error: null,
+      files: existingUploadState && Array.isArray(existingUploadState.files) ? existingUploadState.files : []
+    };
 
     function renderUploadState() {
       const upload = fileUploads[item.id] || { uploading: false, error: null, files: [] };
@@ -614,6 +619,7 @@
   async function uploadReferenceFile(file) {
     const endpoints = getUploadEndpointCandidates();
     let lastServerError = null;
+    let sawNetworkFailure = false;
 
     for (const endpoint of endpoints) {
       const formData = new FormData();
@@ -623,7 +629,8 @@
       try {
         res = await fetch(endpoint, { method: 'POST', body: formData });
       } catch (networkError) {
-        throw new Error('Network error or server unreachable');
+        sawNetworkFailure = true;
+        continue;
       }
 
       const payload = await res.json().catch(() => ({}));
@@ -648,6 +655,10 @@
 
     if (lastServerError) {
       throw lastServerError;
+    }
+
+    if (sawNetworkFailure) {
+      throw new Error('Network error or server unreachable');
     }
 
     throw new Error('Upload failed.');
