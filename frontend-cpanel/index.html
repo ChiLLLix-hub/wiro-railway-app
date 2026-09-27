@@ -512,9 +512,14 @@
     input.addEventListener('change', async () => {
       const selected = Array.from(input.files || []);
       if (!selected.length) {
-        if (!isMulti) {
-          fileUploads[item.id] = { uploading: false, error: null, files: [] };
-        }
+        const existing = (fileUploads[item.id] && Array.isArray(fileUploads[item.id].files))
+          ? fileUploads[item.id].files
+          : [];
+        fileUploads[item.id] = {
+          uploading: false,
+          error: null,
+          files: isMulti ? existing : []
+        };
         renderUploadState();
         return;
       }
