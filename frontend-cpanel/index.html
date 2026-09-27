@@ -558,6 +558,9 @@
           files: isMulti ? existing : []
         };
         renderUploadState();
+        if (fileUploadAbortControllers[item.id] === abortController) {
+          delete fileUploadAbortControllers[item.id];
+        }
         return;
       }
 
