@@ -127,6 +127,7 @@
   <script>
   const DEFAULT_BACKEND_BASE_URL = 'https://wiro-railway-app-production.up.railway.app';
   const CUSTOM_BACKEND_BASE_URL = String(window.WIRO_API_BASE_URL || window.__WIRO_API_BASE_URL || '').replace(/\/+$/, '');
+  const CUSTOM_CREDENTIALS_MODE = String(window.WIRO_API_CREDENTIALS_MODE || '').toLowerCase();
   const BACKEND_BASE_URL = CUSTOM_BACKEND_BASE_URL || DEFAULT_BACKEND_BASE_URL;
   const RAILWAY_BACKEND_URL = `${BACKEND_BASE_URL}/generate`;
   const RAILWAY_MODELS_URL = `${BACKEND_BASE_URL}/models`;
@@ -137,6 +138,10 @@
   // format.js). These are the only ones that require an actual file picker;
   // everything else falls back to text/number/select inputs.
   const FILE_PARAM_TYPES = ['fileinput', 'multifileinput', 'combinefileinput'];
+
+  function getBackendFetchCredentials() {
+    return CUSTOM_CREDENTIALS_MODE === 'include' ? 'include' : 'same-origin';
+  }
 
   const FALLBACK_MODELS = [
     { slug: 'alibaba/wan-2-7-image', title: 'Wan 2.7 Image (Alibaba)', categories: ['text-to-image'] },
@@ -625,7 +630,7 @@
 
       let res;
       try {
-        res = await fetch(endpoint, { method: 'POST', body: formData, credentials: 'same-origin' });
+        res = await fetch(endpoint, { method: 'POST', body: formData, credentials: getBackendFetchCredentials() });
       } catch (networkError) {
         sawNetworkFailure = true;
         continue;
