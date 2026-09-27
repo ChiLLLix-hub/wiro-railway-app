@@ -120,8 +120,9 @@
       </form>
 
       <!-- Error Alert -->
-      <div id="error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4">
-        <p id="error-message"></p>
+      <div id="error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4 space-y-2">
+        <p id="error-message" class="font-medium"></p>
+        <pre id="error-debug" class="hidden whitespace-pre-wrap break-words text-red-300/80 text-xs bg-red-950/40 border border-red-500/30 rounded-lg p-3"></pre>
       </div>
 
       <!-- Output Preview Area -->
@@ -231,6 +232,7 @@
   const spinner = document.getElementById('spinner');
   const errorBox = document.getElementById('error-box');
   const errorMessage = document.getElementById('error-message');
+  const errorDebug = document.getElementById('error-debug');
   const taskSummaryContainer = document.getElementById('task-summary-container');
   const outputContainer = document.getElementById('output-container');
   const mediaWrapper = document.getElementById('media-wrapper');
@@ -1242,7 +1244,7 @@
           showError('Generation finished, but no media URL could be extracted.');
         }
       } else {
-        showError(data.error || 'Failed to generate output.');
+        showError(data.error || 'Failed to generate output.', data.debugOutput);
       }
 
     } catch (err) {
@@ -1395,8 +1397,15 @@
     }
   }
 
-  function showError(msg) {
+  function showError(msg, debugOutput) {
     errorMessage.textContent = typeof msg === 'object' ? JSON.stringify(msg) : msg;
+    if (debugOutput && String(debugOutput).trim()) {
+      errorDebug.textContent = String(debugOutput).trim();
+      errorDebug.classList.remove('hidden');
+    } else {
+      errorDebug.textContent = '';
+      errorDebug.classList.add('hidden');
+    }
     errorBox.classList.remove('hidden');
   }
 

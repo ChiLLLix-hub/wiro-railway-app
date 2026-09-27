@@ -368,12 +368,37 @@ app.post('/generate', async (req, res) => {
         task: task
       });
     } else {
-      return res.status(500).json({ success: false, error: 'Task failed to generate output.' });
+      // Wiro's `task.debugoutput` is a free-form log that usually contains
+      // the actual failure reason (e.g. content-policy rejections, invalid
+      // params, upstream model errors) - surface it to the frontend instead
+      // of a generic "failed" message so users know *why* it failed.
+      const failureReason = extractFailureReason(task);
+      return res.status(500).json({
+        success: false,
+        error: failureReason,
+        debugOutput: task ? task.debugoutput : null,
+        taskId: task ? task.id : null,
+        task: task || null
+      });
     }
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// Wiro's debugoutput is a multi-line log, e.g.:
+//   "Request started.\nTask failed\nOutputImageSensitiveContentDetected.PolicyViolation, message: ..."
+// The last non-empty line is almost always the actual error/reason, so pull
+// that out for a concise, human-readable message; fall back to the whole
+// debugoutput (or a generic message) if it's missing/empty.
+function extractFailureReason(task) {
+  const debugOutput = task && typeof task.debugoutput === 'string' ? task.debugoutput.trim() : '';
+  if (!debugOutput) return 'Task failed to generate output.';
+
+  const lines = debugOutput.split('\n').map(l => l.trim()).filter(Boolean);
+  const lastLine = lines[lines.length - 1];
+  return lastLine || debugOutput;
+}
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
