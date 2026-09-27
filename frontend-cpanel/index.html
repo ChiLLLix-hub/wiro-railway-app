@@ -512,6 +512,9 @@
     input.addEventListener('change', async () => {
       const selected = Array.from(input.files || []);
       if (!selected.length) {
+        if (!isMulti) {
+          fileUploads[item.id] = { uploading: false, error: null, files: [] };
+        }
         renderUploadState();
         return;
       }
@@ -561,13 +564,14 @@
   }
 
   function getUploadEndpointCandidates() {
+    const normalizedBase = String(BACKEND_BASE_URL || '').replace(/\/+$/, '');
+    const normalizedOrigin = String(window.location.origin || '').replace(/\/+$/, '');
+    const useSameOrigin = normalizedBase === normalizedOrigin;
+
     return [...new Set([
       RAILWAY_UPLOAD_URL,
       `${BACKEND_BASE_URL}/api/upload`,
-      `${window.location.origin}/upload`,
-      `${window.location.origin}/api/upload`,
-      '/upload',
-      '/api/upload'
+      ...(useSameOrigin ? [`${window.location.origin}/upload`, `${window.location.origin}/api/upload`, '/upload', '/api/upload'] : [])
     ])];
   }
 
@@ -582,8 +586,8 @@
       video.src = url;
       video.className = 'w-full h-32 object-cover bg-slate-900';
       video.muted = true;
-      video.loop = true;
-      video.autoplay = true;
+      video.controls = true;
+      video.preload = 'metadata';
       video.playsInline = true;
       return video;
     }
