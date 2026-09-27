@@ -153,6 +153,10 @@
       : 'same-origin';
   }
 
+  function getBackendFetchMode() {
+    return isBackendSameOrigin() ? 'same-origin' : 'cors';
+  }
+
   const FALLBACK_MODELS = [
     { slug: 'alibaba/wan-2-7-image', title: 'Wan 2.7 Image (Alibaba)', categories: ['text-to-image'] },
     { slug: 'bytedance/seedream-v5-pro-uncensored', title: 'SeeDream V5 Pro (ByteDance)', categories: ['text-to-image'] },
@@ -640,7 +644,12 @@
 
       let res;
       try {
-        res = await fetch(endpoint, { method: 'POST', body: formData, credentials: getBackendFetchCredentials() });
+        res = await fetch(endpoint, {
+          method: 'POST',
+          body: formData,
+          mode: getBackendFetchMode(),
+          credentials: getBackendFetchCredentials()
+        });
       } catch (networkError) {
         sawNetworkFailure = true;
         continue;
