@@ -540,10 +540,7 @@
       renderUploadState();
 
       try {
-        const uploaded = [];
-        for (const file of selected) {
-          uploaded.push(await uploadReferenceFile(file));
-        }
+        const uploaded = await Promise.all(selected.map(file => uploadReferenceFile(file)));
 
         fileUploads[item.id] = {
           uploading: false,
@@ -574,9 +571,12 @@
   }
 
   function getUploadEndpointCandidates() {
-    const normalizedBase = String(BACKEND_BASE_URL || '').replace(/\/+$/, '');
-    const normalizedOrigin = String(window.location.origin || '').replace(/\/+$/, '');
-    const useSameOrigin = normalizedBase === normalizedOrigin;
+    let useSameOrigin = false;
+    try {
+      useSameOrigin = new URL(BACKEND_BASE_URL || '', window.location.origin).origin === window.location.origin;
+    } catch {
+      useSameOrigin = false;
+    }
 
     return [...new Set([
       RAILWAY_UPLOAD_URL,
@@ -627,7 +627,7 @@
 
       let res;
       try {
-        res = await fetch(endpoint, { method: 'POST', body: formData });
+        res = await fetch(endpoint, { method: 'POST', body: formData, credentials: 'same-origin' });
       } catch (networkError) {
         sawNetworkFailure = true;
         continue;
