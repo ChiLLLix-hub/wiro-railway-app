@@ -236,7 +236,7 @@ app.get('/models/schema', async (req, res) => {
 // user picked (multipart/form-data), relays it to Wiro's `/File/Upload`
 // endpoint using our server-side credentials, and returns the resulting
 // hosted URL so the frontend can attach it to the run parameters.
-app.post('/upload', upload.single('file'), async (req, res) => {
+async function handleReferenceUpload(req, res) {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded. Attach it as multipart/form-data field "file".' });
@@ -280,7 +280,10 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message });
   }
-});
+}
+
+app.post('/upload', upload.single('file'), handleReferenceUpload);
+app.post('/api/upload', upload.single('file'), handleReferenceUpload);
 
 // Dynamic Model Execution Endpoint
 app.post('/generate', async (req, res) => {
