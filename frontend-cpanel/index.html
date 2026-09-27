@@ -209,6 +209,7 @@
   // { uploading: bool, error: string|null, files: [{ name, url, contentType, size }] }
   let fileUploads = {};
   let fileUploadRequestTokens = {};
+  let fileUploadAbortControllers = {};
 
   // ------------------------------------------------------------------
   // Model Browser: fetch, render, search, and routing
@@ -526,6 +527,7 @@
         removeBtn.type = 'button';
         removeBtn.className = 'w-full rounded-lg border border-red-500/60 text-red-300 text-xs px-2 py-1 hover:bg-red-500/10';
         removeBtn.textContent = 'Delete reference';
+        removeBtn.setAttribute('aria-label', `Delete reference ${file.name || `#${index + 1}`}`);
         removeBtn.addEventListener('click', () => {
           const current = fileUploads[item.id] || { uploading: false, error: null, files: [] };
           const nextFiles = current.files.filter((_, fileIndex) => fileIndex !== index);
@@ -540,6 +542,12 @@
     }
 
     input.addEventListener('change', async () => {
+      if (fileUploadAbortControllers[item.id]) {
+        fileUploadAbortControllers[item.id].abort();
+      }
+      const abortController = new AbortController();
+      fileUploadAbortControllers[item.id] = abortController;
+
       const requestToken = (fileUploadRequestTokens[item.id] || 0) + 1;
       fileUploadRequestTokens[item.id] = requestToken;
       const selected = Array.from(input.files || []);
@@ -566,7 +574,9 @@
       status.className = 'text-xs text-blue-400 mt-1';
       renderUploadState();
 
-      const settled = await Promise.allSettled(selected.map(file => uploadReferenceFile(file)));
+      const settled = await Promise.allSettled(
+        selected.map(file => uploadReferenceFile(file, abortController.signal))
+      );
       const uploaded = [];
       const failures = [];
 
@@ -645,7 +655,7 @@
     return fallback;
   }
 
-  async function uploadReferenceFile(file) {
+  async function uploadReferenceFile(file, signal) {
     const endpoints = getUploadEndpointCandidates();
     let lastResponseError = null;
     let sawNetworkFailure = false;
@@ -662,14 +672,15 @@
           method: 'POST',
           body: formData,
           mode: getBackendFetchMode(),
-          credentials: credentialsMode
+          credentials: credentialsMode,
+          signal
         });
       } catch (networkError) {
         sawNetworkFailure = true;
         lastNetworkErrorMessage = networkError && networkError.message
           ? networkError.message
           : 'Network error or server unreachable';
-        continue;
+        break;
       }
 
       const payload = await res.json().catch(() => ({}));
