@@ -673,6 +673,9 @@
           signal
         });
       } catch (networkError) {
+        if (networkError && networkError.name === 'AbortError') {
+          throw networkError;
+        }
         sawNetworkFailure = true;
         lastNetworkErrorMessage = networkError && networkError.message
           ? networkError.message
