@@ -48,7 +48,21 @@
 
       <div id="models-status" class="text-slate-400 text-sm py-2">Loading models…</div>
 
-      <div id="models-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+      <div class="overflow-x-auto border border-slate-800 rounded-xl">
+        <table class="min-w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-800">
+              <th class="px-4 py-2 font-medium">Model</th>
+              <th class="px-4 py-2 font-medium">Provider</th>
+              <th class="px-4 py-2 font-medium">Category</th>
+              <th class="px-4 py-2 font-medium">Tags</th>
+              <th class="px-4 py-2 font-medium">Pricing</th>
+              <th class="px-4 py-2 font-medium"></th>
+            </tr>
+          </thead>
+          <tbody id="models-grid" class="divide-y divide-slate-800"></tbody>
+        </table>
+      </div>
 
       <div class="flex flex-col items-center gap-2 pt-2">
         <p id="models-count" class="text-slate-500 text-xs hidden"></p>
@@ -106,8 +120,9 @@
       </form>
 
       <!-- Error Alert -->
-      <div id="error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4">
-        <p id="error-message"></p>
+      <div id="error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4 space-y-2">
+        <p id="error-message" class="font-medium"></p>
+        <pre id="error-debug" class="hidden whitespace-pre-wrap break-words text-red-300/80 text-xs bg-red-950/40 border border-red-500/30 rounded-lg p-3"></pre>
       </div>
 
       <!-- Output Preview Area -->
@@ -120,6 +135,7 @@
           <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
             <p class="text-xs uppercase tracking-wider text-slate-500">Generation Cost</p>
             <p id="task-cost" class="mt-2 text-slate-200">—</p>
+            <p id="task-cost-converted" class="mt-1 text-xs text-slate-500 hidden"></p>
           </div>
         </div>
       </div>
@@ -217,12 +233,14 @@
   const spinner = document.getElementById('spinner');
   const errorBox = document.getElementById('error-box');
   const errorMessage = document.getElementById('error-message');
+  const errorDebug = document.getElementById('error-debug');
   const taskSummaryContainer = document.getElementById('task-summary-container');
   const outputContainer = document.getElementById('output-container');
   const mediaWrapper = document.getElementById('media-wrapper');
   const downloadLink = document.getElementById('download-link');
   const taskIdEl = document.getElementById('task-id');
   const taskCostEl = document.getElementById('task-cost');
+  const taskCostConvertedEl = document.getElementById('task-cost-converted');
   const downloadsList = document.getElementById('downloads-list');
   const dynamicParams = document.getElementById('dynamic-params');
   const paramsStatus = document.getElementById('params-status');
@@ -355,30 +373,96 @@
     fetchModelsPage({ start: currentStart, append: true });
   });
 
+  // Wiro's raw `categories` array on each model mixes true modalities
+  // (text-to-image, image-to-video, ...) with provider names and unrelated
+  // feature/showcase tags (ByteDance, lora-flux, checkpoint-file, ...),
+  // which made the old pill row show 40+ near-duplicate options. Group the
+  // real modality slugs into a handful of broad, user-facing buckets
+  // instead, similar to Wiro's own "One interface" catalog filters.
+  const CATEGORY_GROUPS = [
+    { label: 'Video', slugs: ['text-to-video', 'image-to-video', 'video-to-video', 'speech-to-video'] },
+    { label: 'Image', slugs: ['text-to-image', 'image-to-image', 'image-editing', 'inpainting'] },
+    { label: 'Audio & Speech', slugs: ['text-to-speech', 'speech-to-speech', 'speech-to-text', 'voice-agent'] },
+    { label: 'Realtime Stream', slugs: ['realtime-conversation'] },
+    { label: 'Music', slugs: ['text-to-music', 'image-to-music', 'text-to-song', 'image-to-song'] },
+    { label: '3D', slugs: ['3d', 'image-to-3d', 'text-to-3d'] },
+    { label: 'LLM', slugs: ['llm', 'llm-reasoning', 'llm-tool-call', 'llm-response-format'] }
+  ];
+  const CATEGORY_GROUP_DOT_COLORS = {
+    'Video': 'bg-blue-400',
+    'Image': 'bg-purple-400',
+    'Audio & Speech': 'bg-orange-400',
+    'Realtime Stream': 'bg-red-400',
+    'Music': 'bg-fuchsia-400',
+    '3D': 'bg-teal-400',
+    'LLM': 'bg-green-400'
+  };
+  let activeCategoryGroups = new Set(); // group labels, e.g. 'Video'
+
   function renderCategoryFilters() {
-    const activeCategories = new Set(currentCategories);
     categoryFiltersEl.innerHTML = '';
 
-    [...knownCategories].sort().forEach(category => {
+    CATEGORY_GROUPS.forEach(group => {
       const pill = document.createElement('button');
       pill.type = 'button';
-      const isActive = activeCategories.has(category);
-      pill.className = `text-xs font-medium rounded-full px-3 py-1.5 border transition ${
+      const isActive = activeCategoryGroups.has(group.label);
+      pill.className = `inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-3 py-1.5 border transition ${
         isActive
           ? 'bg-blue-600 border-blue-500 text-white'
           : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-blue-500'
       }`;
-      pill.textContent = category;
+      pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${CATEGORY_GROUP_DOT_COLORS[group.label] || 'bg-slate-400'}"></span>${escapeHtml(group.label)}`;
       pill.addEventListener('click', () => {
-        if (currentCategories.has(category)) {
-          currentCategories.delete(category);
+        if (activeCategoryGroups.has(group.label)) {
+          activeCategoryGroups.delete(group.label);
         } else {
-          currentCategories.add(category);
+          activeCategoryGroups.add(group.label);
         }
+        currentCategories = new Set(
+          [...activeCategoryGroups].flatMap(label => {
+            const found = CATEGORY_GROUPS.find(g => g.label === label);
+            return found ? found.slugs : [];
+          })
+        );
         loadModels();
       });
       categoryFiltersEl.appendChild(pill);
     });
+  }
+
+  // Given a model's raw category slugs, find the broad group it belongs to
+  // (for the "Category" table column) and whatever's left over (for "Tags").
+  function classifyCategories(categories) {
+    const list = Array.isArray(categories) ? categories : [];
+    let primaryGroup = null;
+    for (const group of CATEGORY_GROUPS) {
+      if (list.some(c => group.slugs.includes(c))) {
+        primaryGroup = group.slugs.find(s => list.includes(s));
+        break;
+      }
+    }
+    const tags = list.filter(c => c !== primaryGroup);
+    return { primary: primaryGroup, tags };
+  }
+
+  function formatCategoryLabel(slug) {
+    if (!slug) return 'Model';
+    return slug
+      .split('-')
+      .map(word => (word === 'to' ? 'to' : word.charAt(0).toUpperCase() + word.slice(1)))
+      .join(' ');
+  }
+
+  // Rough per-model pricing unit, inferred from modality since Wiro's
+  // /Tool/List doesn't expose a stable "billing unit" field directly.
+  function inferPricingUnit(primaryCategory) {
+    if (!primaryCategory) return 'Per run';
+    if (['text-to-video', 'image-to-video', 'video-to-video', 'speech-to-video'].includes(primaryCategory)) return 'Per second';
+    if (['text-to-image', 'image-to-image', 'image-editing', 'inpainting'].includes(primaryCategory)) return 'Per image';
+    if (['text-to-speech', 'speech-to-speech', 'speech-to-text', 'voice-agent'].includes(primaryCategory)) return 'Per minute';
+    if (['text-to-music', 'image-to-music', 'text-to-song', 'image-to-song'].includes(primaryCategory)) return 'Per run';
+    if (['llm', 'llm-reasoning', 'llm-tool-call', 'llm-response-format'].includes(primaryCategory)) return 'Per request';
+    return 'Per run';
   }
 
   modelSortSelect.addEventListener('change', () => {
@@ -386,16 +470,35 @@
     loadModels();
   });
 
+  // Some Wiro CDN thumbnails come back as plain `http://` URLs; browsers
+  // silently block that as mixed content on an https page (and the <img>
+  // just fires `error`), which is why every card fell back to "No preview".
+  // Upgrade to https before ever setting it as a src.
+  function sanitizeImageUrl(url) {
+    if (!url || typeof url !== 'string') return null;
+    const trimmed = url.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith('http://')) return `https://${trimmed.slice('http://'.length)}`;
+    return trimmed;
+  }
+
   function normalizeModel(m) {
     const slug = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name || ''));
+    const categories = Array.isArray(m.categories) && m.categories.length > 0
+      ? m.categories
+      : [m.category || m.type || 'Model'];
     return {
       slug,
+      owner: m.owner || (slug.includes('/') ? slug.split('/')[0] : ''),
       title: m.title || m.name || slug,
       description: m.description || '',
-      categories: Array.isArray(m.categories) && m.categories.length > 0
-        ? m.categories
-        : [m.category || m.type || 'Model'],
-      image: m.image || null
+      categories,
+      tags: Array.isArray(m.tags) ? m.tags : [],
+      // Fall back to the first example output when no cover image is set,
+      // so the table still has *something* to preview when possible.
+      image: sanitizeImageUrl(m.image) || sanitizeImageUrl(Array.isArray(m.samples) && m.samples[0]),
+      dynamicprice: m.dynamicprice || null,
+      approximatelycost: m.approximatelycost || null
     };
   }
 
@@ -403,26 +506,35 @@
     modelsGrid.innerHTML = '';
 
     if (!models.length) {
-      const empty = document.createElement('div');
-      empty.className = 'text-slate-400 text-sm col-span-full text-center py-6';
-      empty.textContent = 'No models match your search.';
+      const empty = document.createElement('tr');
+      empty.innerHTML = `<td colspan="6" class="text-slate-400 text-sm text-center py-6">No models match your search.</td>`;
       modelsGrid.appendChild(empty);
       return;
     }
 
     models.forEach(model => {
-      const card = document.createElement('button');
-      card.type = 'button';
-      card.className = 'text-left bg-slate-950 border border-slate-800 rounded-xl overflow-hidden hover:border-blue-500 hover:bg-slate-800/50 transition focus:outline-none focus:ring-2 focus:ring-blue-500';
+      const { primary, tags: extraTags } = classifyCategories(model.categories);
+      const categoryLabel = formatCategoryLabel(primary || model.categories[0]);
+      const pricingLabel = model.approximatelycost ? `~$${model.approximatelycost}` : inferPricingUnit(primary);
+
+      const row = document.createElement('tr');
+      row.className = 'hover:bg-slate-800/50 transition cursor-pointer';
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+
+      const modelCell = document.createElement('td');
+      modelCell.className = 'px-4 py-3';
+      const modelCellInner = document.createElement('div');
+      modelCellInner.className = 'flex items-center gap-3';
 
       const thumbWrapper = document.createElement('div');
-      thumbWrapper.className = 'w-full aspect-video bg-slate-900 flex items-center justify-center overflow-hidden';
-
+      thumbWrapper.className = 'w-12 h-12 shrink-0 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center overflow-hidden';
       if (model.image) {
         const img = document.createElement('img');
         img.src = model.image;
         img.alt = model.title || model.slug;
         img.loading = 'lazy';
+        img.referrerPolicy = 'no-referrer';
         img.className = 'w-full h-full object-cover';
         img.addEventListener('error', () => {
           img.remove();
@@ -433,23 +545,62 @@
         thumbWrapper.appendChild(createThumbnailPlaceholder());
       }
 
-      const body = document.createElement('div');
-      body.className = 'p-4';
-      body.innerHTML = `
-        <h3 class="font-semibold text-slate-100 text-sm mb-2">${escapeHtml(model.title)}</h3>
-        <code class="inline-block bg-slate-800 text-blue-300 text-xs rounded px-2 py-1 break-all">${escapeHtml(model.slug)}</code>
+      const titleWrapper = document.createElement('div');
+      titleWrapper.className = 'min-w-0';
+      titleWrapper.innerHTML = `
+        <p class="font-semibold text-slate-100 text-sm truncate">${escapeHtml(model.title)}</p>
+        <code class="text-blue-300 text-xs break-all">${escapeHtml(model.slug)}</code>
       `;
 
-      card.appendChild(thumbWrapper);
-      card.appendChild(body);
-      card.addEventListener('click', () => selectModel(model));
-      modelsGrid.appendChild(card);
+      modelCellInner.appendChild(thumbWrapper);
+      modelCellInner.appendChild(titleWrapper);
+      modelCell.appendChild(modelCellInner);
+
+      const providerCell = document.createElement('td');
+      providerCell.className = 'px-4 py-3 text-slate-400 text-sm whitespace-nowrap';
+      providerCell.textContent = model.owner || '—';
+
+      const categoryCell = document.createElement('td');
+      categoryCell.className = 'px-4 py-3';
+      categoryCell.innerHTML = `<span class="inline-block text-xs font-medium rounded px-2 py-1 border border-blue-800 bg-blue-950 text-blue-300 whitespace-nowrap">${escapeHtml(categoryLabel)}</span>`;
+
+      const tagsCell = document.createElement('td');
+      tagsCell.className = 'px-4 py-3';
+      tagsCell.innerHTML = [...new Set([...extraTags, ...model.tags])]
+        .slice(0, 3)
+        .map(tag => `<span class="inline-block text-xs rounded px-2 py-1 border border-slate-700 bg-slate-800 text-slate-300 mr-1 mb-1 whitespace-nowrap">${escapeHtml(tag)}</span>`)
+        .join('');
+
+      const pricingCell = document.createElement('td');
+      pricingCell.className = 'px-4 py-3 text-slate-400 text-sm whitespace-nowrap';
+      pricingCell.textContent = pricingLabel;
+
+      const actionCell = document.createElement('td');
+      actionCell.className = 'px-4 py-3 text-right';
+      actionCell.innerHTML = `<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400">View model →</span>`;
+
+      row.appendChild(modelCell);
+      row.appendChild(providerCell);
+      row.appendChild(categoryCell);
+      row.appendChild(tagsCell);
+      row.appendChild(pricingCell);
+      row.appendChild(actionCell);
+
+      row.addEventListener('click', () => selectModel(model));
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectModel(model);
+        }
+      });
+
+      modelsGrid.appendChild(row);
     });
   }
 
   function createThumbnailPlaceholder() {
     const placeholder = document.createElement('div');
-    placeholder.className = 'w-full h-full flex items-center justify-center text-slate-600 text-xs';
+    placeholder.className = 'w-full h-full flex items-center justify-center text-slate-600 text-[10px] text-center leading-tight px-1';
     placeholder.textContent = 'No preview';
     return placeholder;
   }
@@ -1095,7 +1246,7 @@
           showError('Generation finished, but no media URL could be extracted.');
         }
       } else {
-        showError(data.error || 'Failed to generate output.');
+        showError(data.error || 'Failed to generate output.', data.debugOutput);
       }
 
     } catch (err) {
@@ -1166,6 +1317,15 @@
   function renderTaskDetails(data, downloads) {
     taskIdEl.textContent = data.taskId || (data.task && data.task.id) || '—';
     taskCostEl.textContent = data.totalCostDisplay ?? formatTaskCost(data.totalCost ?? (data.task && data.task.totalcost));
+
+    if (data.convertedCostDisplay) {
+      taskCostConvertedEl.textContent = `≈ ${data.convertedCostDisplay}${data.exchangeRate ? ` (rate ${data.exchangeRate})` : ''}`;
+      taskCostConvertedEl.classList.remove('hidden');
+    } else {
+      taskCostConvertedEl.textContent = '';
+      taskCostConvertedEl.classList.add('hidden');
+    }
+
     taskSummaryContainer.classList.toggle(
       'hidden',
       taskIdEl.textContent === '—' && taskCostEl.textContent === '—' && downloads.length === 0
@@ -1197,6 +1357,8 @@
   function resetOutputDetails() {
     taskIdEl.textContent = '—';
     taskCostEl.textContent = '—';
+    taskCostConvertedEl.textContent = '';
+    taskCostConvertedEl.classList.add('hidden');
     downloadsList.innerHTML = '';
     taskSummaryContainer.classList.add('hidden');
     downloadLink.classList.add('hidden');
@@ -1248,8 +1410,15 @@
     }
   }
 
-  function showError(msg) {
+  function showError(msg, debugOutput) {
     errorMessage.textContent = typeof msg === 'object' ? JSON.stringify(msg) : msg;
+    if (debugOutput && String(debugOutput).trim()) {
+      errorDebug.textContent = String(debugOutput).trim();
+      errorDebug.classList.remove('hidden');
+    } else {
+      errorDebug.textContent = '';
+      errorDebug.classList.add('hidden');
+    }
     errorBox.classList.remove('hidden');
   }
 

@@ -39,14 +39,38 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB per file, matches typical Wiro reference-media limits
 });
 
+// Optional currency conversion for the displayed cost. Set CURRENCY_EXCHANGE
+// (e.g. 4.5) in Railway's environment variables to multiply Wiro's USD
+// totalcost into another currency - the multiplier itself can bake in a
+// margin/profit on top of the real exchange rate if desired. Set
+// CURRENCY_SYMBOL to change the displayed label (defaults to "RM").
+const CURRENCY_EXCHANGE_RATE = Number(process.env.CURRENCY_EXCHANGE);
+const CURRENCY_SYMBOL = process.env.CURRENCY_SYMBOL || 'RM';
+
 function formatTaskCost(task) {
   const amount = task?.totalcost == null || task.totalcost === ''
     ? null
     : String(task.totalcost);
-  return {
+  const result = {
     amount,
-    display: amount == null ? '—' : (amount === '0' ? '$0 (no charge)' : `$${amount}`)
+    display: amount == null ? '—' : (amount === '0' ? '$0 (no charge)' : `$${amount}`),
+    convertedAmount: null,
+    convertedDisplay: null,
+    currencySymbol: CURRENCY_SYMBOL,
+    exchangeRate: Number.isFinite(CURRENCY_EXCHANGE_RATE) && CURRENCY_EXCHANGE_RATE > 0 ? CURRENCY_EXCHANGE_RATE : null
   };
+
+  if (amount != null && result.exchangeRate != null) {
+    const converted = Number(amount) * result.exchangeRate;
+    if (Number.isFinite(converted)) {
+      result.convertedAmount = converted;
+      result.convertedDisplay = converted === 0
+        ? `${CURRENCY_SYMBOL} 0 (no charge)`
+        : `${CURRENCY_SYMBOL} ${converted.toFixed(2)}`;
+    }
+  }
+
+  return result;
 }
 
 function normalizeTaskOutputs(outputs = []) {
@@ -117,7 +141,13 @@ app.get('/models', async (req, res) => {
       // /Tool/List response - lets the frontend render a real preview
       // image per model instead of a text-only card.
       image: model.image || null,
-      samples: Array.isArray(model.samples) ? model.samples : []
+      samples: Array.isArray(model.samples) ? model.samples : [],
+      tags: Array.isArray(model.tags) ? model.tags : [],
+      // Raw pricing signals from Wiro so the frontend can show a cost hint
+      // without hardcoding per-model prices.
+      dynamicprice: model.dynamicprice || null,
+      cps: model.cps || null,
+      approximatelycost: model.approximatelycost || null
     }));
 
     return res.json({
@@ -357,17 +387,46 @@ app.post('/generate', async (req, res) => {
         taskId: task.id,
         totalCost: taskCost.amount,
         totalCostDisplay: taskCost.display,
+        convertedCost: taskCost.convertedAmount,
+        convertedCostDisplay: taskCost.convertedDisplay,
+        currencySymbol: taskCost.currencySymbol,
+        exchangeRate: taskCost.exchangeRate,
         downloads: downloadableOutputs,
         outputs,
         task: task
       });
     } else {
-      return res.status(500).json({ success: false, error: 'Task failed to generate output.' });
+      // Wiro's `task.debugoutput` is a free-form log that usually contains
+      // the actual failure reason (e.g. content-policy rejections, invalid
+      // params, upstream model errors) - surface it to the frontend instead
+      // of a generic "failed" message so users know *why* it failed.
+      const failureReason = extractFailureReason(task);
+      return res.status(500).json({
+        success: false,
+        error: failureReason,
+        debugOutput: task ? task.debugoutput : null,
+        taskId: task ? task.id : null,
+        task: task || null
+      });
     }
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// Wiro's debugoutput is a multi-line log, e.g.:
+//   "Request started.\nTask failed\nOutputImageSensitiveContentDetected.PolicyViolation, message: ..."
+// The last non-empty line is almost always the actual error/reason, so pull
+// that out for a concise, human-readable message; fall back to the whole
+// debugoutput (or a generic message) if it's missing/empty.
+function extractFailureReason(task) {
+  const debugOutput = task && typeof task.debugoutput === 'string' ? task.debugoutput.trim() : '';
+  if (!debugOutput) return 'Task failed to generate output.';
+
+  const lines = debugOutput.split('\n').map(l => l.trim()).filter(Boolean);
+  const lastLine = lines[lines.length - 1];
+  return lastLine || debugOutput;
+}
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
