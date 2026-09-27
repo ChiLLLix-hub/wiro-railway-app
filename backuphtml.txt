@@ -1,0 +1,707 @@
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Multi-Model Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!--<link rel="icon" href="https://files.svgcdn.io/flat-ui/rocket.svg" type="image/x-icon"> -->
+  <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-8">
+
+  <div class="max-w-7xl mx-auto space-y-6">
+
+    <div class="text-center space-y-2">
+      <h1 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400">
+        AI Multi-Model Studio
+      </h1>
+      <p class="text-slate-400 text-sm">Image &amp; Video Generation via Wiro AI</p>
+    </div>
+
+    <!-- ==================== MODEL BROWSER VIEW ==================== -->
+    <div id="browser-view" class="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
+      <div>
+        <h2 class="text-xl font-bold text-slate-100">Model Browser</h2>
+        <p class="text-slate-400 text-sm">Browse available models interactively. Click on a model to see its details on the model page.</p>
+      </div>
+
+      <input
+        id="model-search"
+        type="text"
+        placeholder="Search models..."
+        class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+      >
+
+      <div id="models-status" class="text-slate-400 text-sm py-2">Loading models…</div>
+
+      <div id="models-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+    </div>
+
+    <!-- ==================== MODEL RUN VIEW ==================== -->
+    <div id="model-view" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4 max-w-4xl mx-auto">
+      <button id="back-btn" type="button" class="text-blue-400 hover:underline text-sm flex items-center gap-1">
+        ← Back to Model Browser
+      </button>
+
+      <div>
+        <h2 id="model-title" class="text-xl font-bold text-slate-100"></h2>
+        <p id="model-slug" class="text-slate-400 text-xs font-mono mt-1"></p>
+        <p id="model-description" class="text-slate-400 text-sm mt-2"></p>
+      </div>
+
+      <form id="generator-form" class="space-y-4">
+
+        <!-- Prompt Input -->
+        <div>
+          <label for="prompt" class="block text-sm font-medium text-slate-300 mb-1">Text Prompt</label>
+          <textarea
+            id="prompt"
+            rows="3"
+            required
+            placeholder="Describe what you want to generate..."
+            class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+          ></textarea>
+        </div>
+
+        <!-- Dynamic Model Parameters (rendered from the model's schema) -->
+        <div id="params-status" class="hidden text-slate-400 text-xs"></div>
+        <div id="dynamic-params" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+
+        <button
+          type="submit"
+          id="submit-btn"
+          class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition flex items-center justify-center space-x-2 disabled:opacity-50"
+        >
+          <span id="btn-text">Generate Asset</span>
+          <svg id="spinner" class="animate-spin h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </button>
+      </form>
+
+      <!-- Error Alert -->
+      <div id="error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4">
+        <p id="error-message"></p>
+      </div>
+
+      <!-- Output Preview Area -->
+      <div id="output-container" class="hidden space-y-4 pt-2">
+        <div class="flex justify-between items-center">
+          <h2 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Result</h2>
+        </div>
+
+        <!-- Dynamic Media Container -->
+        <div id="media-wrapper" class="relative bg-slate-950 rounded-xl overflow-hidden border border-slate-800 aspect-square flex items-center justify-center">
+          <!-- JS will dynamically insert <img> or <video> here -->
+        </div>
+
+        <div class="flex items-center justify-between text-sm pt-1">
+          <a id="download-link" href="" target="_blank" class="text-blue-400 hover:underline">
+            Open Full File ↗
+          </a>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+  const RAILWAY_BACKEND_URL = 'https://wiro-railway-app-production.up.railway.app/generate';
+  const RAILWAY_MODELS_URL = 'https://wiro-railway-app-production.up.railway.app/models';
+  const RAILWAY_SCHEMA_URL = 'https://wiro-railway-app-production.up.railway.app/models/schema';
+  const RAILWAY_UPLOAD_URL = 'https://wiro-railway-app-production.up.railway.app/upload';
+
+  // Wiro's real schema types for reference-media parameters (see Wiro-MCP's
+  // format.js). These are the only ones that require an actual file picker;
+  // everything else falls back to text/number/select inputs.
+  const FILE_PARAM_TYPES = ['fileinput', 'multifileinput', 'combinefileinput'];
+
+  const FALLBACK_MODELS = [
+    { slug: 'alibaba/wan-2-7-image', title: 'Wan 2.7 Image (Alibaba)', categories: ['text-to-image'] },
+    { slug: 'bytedance/seedream-v5-pro-uncensored', title: 'SeeDream V5 Pro (ByteDance)', categories: ['text-to-image'] },
+    { slug: 'bytedance/seedream-v4', title: 'SeeDream V4 (ByteDance)', categories: ['text-to-image'] },
+    { slug: 'alibaba/wan-2-1-video', title: 'Wan 2.1 Video (Alibaba)', categories: ['text-to-video'] },
+    { slug: 'bytedance/animatediff', title: 'AnimateDiff (ByteDance)', categories: ['text-to-video'] }
+  ];
+
+  // View elements
+  const browserView = document.getElementById('browser-view');
+  const modelView = document.getElementById('model-view');
+  const backBtn = document.getElementById('back-btn');
+
+  // Browser elements
+  const modelSearch = document.getElementById('model-search');
+  const modelsStatus = document.getElementById('models-status');
+  const modelsGrid = document.getElementById('models-grid');
+
+  // Model run elements
+  const modelTitleEl = document.getElementById('model-title');
+  const modelSlugEl = document.getElementById('model-slug');
+  const modelDescriptionEl = document.getElementById('model-description');
+  const form = document.getElementById('generator-form');
+  const promptInput = document.getElementById('prompt');
+  const submitBtn = document.getElementById('submit-btn');
+  const btnText = document.getElementById('btn-text');
+  const spinner = document.getElementById('spinner');
+  const errorBox = document.getElementById('error-box');
+  const errorMessage = document.getElementById('error-message');
+  const outputContainer = document.getElementById('output-container');
+  const mediaWrapper = document.getElementById('media-wrapper');
+  const downloadLink = document.getElementById('download-link');
+  const dynamicParams = document.getElementById('dynamic-params');
+  const paramsStatus = document.getElementById('params-status');
+
+  let allModels = [];
+  let selectedModel = null; // { slug, title, description, categories }
+  let currentSchemaFields = []; // Flattened list of { id, type, ... } for the selected model
+  let schemaRequestToken = 0; // Guards against stale/out-of-order schema responses
+  // Uploaded reference-media state, keyed by param id:
+  // { uploading: bool, error: string|null, files: [{ name, url }] }
+  let fileUploads = {};
+
+  // ------------------------------------------------------------------
+  // Model Browser: fetch, render, search, and routing
+  // ------------------------------------------------------------------
+
+  async function loadModels() {
+    try {
+      const res = await fetch(RAILWAY_MODELS_URL, { cache: 'no-store' });
+
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+
+      const payload = await res.json();
+      const modelList = Array.isArray(payload) ? payload : (payload.data || []);
+
+      allModels = (modelList.length > 0 ? modelList : FALLBACK_MODELS).map(normalizeModel);
+      modelsStatus.classList.add('hidden');
+    } catch (err) {
+      console.error('Could not fetch dynamic models from Railway backend:', err);
+      allModels = FALLBACK_MODELS.map(normalizeModel);
+      modelsStatus.textContent = `Could not load live models from server (${err.message}). Showing default list.`;
+      modelsStatus.classList.remove('hidden');
+    }
+
+    renderModelGrid(allModels);
+    handleRouteFromHash();
+  }
+
+  function normalizeModel(m) {
+    const slug = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name || ''));
+    return {
+      slug,
+      title: m.title || m.name || slug,
+      description: m.description || '',
+      categories: Array.isArray(m.categories) && m.categories.length > 0
+        ? m.categories
+        : [m.category || m.type || 'Model']
+    };
+  }
+
+  function renderModelGrid(models) {
+    modelsGrid.innerHTML = '';
+
+    if (!models.length) {
+      const empty = document.createElement('div');
+      empty.className = 'text-slate-400 text-sm col-span-full text-center py-6';
+      empty.textContent = 'No models match your search.';
+      modelsGrid.appendChild(empty);
+      return;
+    }
+
+    models.forEach(model => {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'text-left bg-slate-950 border border-slate-800 rounded-xl p-4 hover:border-blue-500 hover:bg-slate-800/50 transition focus:outline-none focus:ring-2 focus:ring-blue-500';
+      card.innerHTML = `
+        <h3 class="font-semibold text-slate-100 text-sm mb-2">${escapeHtml(model.title)}</h3>
+        <code class="inline-block bg-slate-800 text-blue-300 text-xs rounded px-2 py-1 break-all">${escapeHtml(model.slug)}</code>
+      `;
+      card.addEventListener('click', () => selectModel(model));
+      modelsGrid.appendChild(card);
+    });
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str == null ? '' : String(str);
+    return div.innerHTML;
+  }
+
+  modelSearch.addEventListener('input', () => {
+    const term = modelSearch.value.trim().toLowerCase();
+
+    if (!term) {
+      renderModelGrid(allModels);
+      return;
+    }
+
+    const filtered = allModels.filter(m =>
+      m.title.toLowerCase().includes(term)
+      || m.slug.toLowerCase().includes(term)
+      || m.categories.some(c => c.toLowerCase().includes(term))
+    );
+
+    renderModelGrid(filtered);
+  });
+
+  // ------------------------------------------------------------------
+  // Navigation between Model Browser and Model Run page
+  // ------------------------------------------------------------------
+
+  function selectModel(model) {
+    selectedModel = model;
+    window.location.hash = `model/${encodeURIComponent(model.slug)}`;
+    showModelView(model);
+  }
+
+  function showModelView(model) {
+    modelTitleEl.textContent = model.title;
+    modelSlugEl.textContent = model.slug;
+    modelDescriptionEl.textContent = model.description || '';
+    modelDescriptionEl.classList.toggle('hidden', !model.description);
+
+    errorBox.classList.add('hidden');
+    outputContainer.classList.add('hidden');
+    promptInput.value = '';
+
+    browserView.classList.add('hidden');
+    modelView.classList.remove('hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    loadModelSchema(model);
+  }
+
+  // ------------------------------------------------------------------
+  // Model Schema: fetch each model's real parameters and render inputs
+  // ------------------------------------------------------------------
+  // Different models require different parameters (e.g. SeeDream V4 needs
+  // `size`, `maxImages` and `watermark`, while a video model needs
+  // `duration`/`aspect_ratio`). Rather than hardcoding those per model, we
+  // fetch the model's schema from the backend and render matching form
+  // fields, so required parameters are always collected before submitting.
+  async function loadModelSchema(model) {
+    const requestToken = ++schemaRequestToken;
+    currentSchemaFields = [];
+    fileUploads = {};
+    dynamicParams.innerHTML = '';
+    paramsStatus.classList.add('hidden');
+
+    try {
+      const res = await fetch(`${RAILWAY_SCHEMA_URL}?model=${encodeURIComponent(model.slug)}`, { cache: 'no-store' });
+      const payload = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(payload.error || `Server returned status ${res.status}`);
+      }
+
+      if (requestToken !== schemaRequestToken) return; // A newer model was selected meanwhile
+
+      const groups = Array.isArray(payload.parameters) ? payload.parameters : [];
+      renderParamFields(groups);
+    } catch (err) {
+      if (requestToken !== schemaRequestToken) return;
+      console.error('Could not fetch model schema:', err);
+      // Surface the backend's actual error (e.g. "Model ... was not found"
+      // or an upstream Wiro auth error) instead of a purely generic message,
+      // so misconfigurations are easier to spot than a silent fallback.
+      paramsStatus.textContent = `Could not load extra parameters for this model (${err.message}). Only the prompt will be sent.`;
+      paramsStatus.classList.remove('hidden');
+    }
+  }
+
+  function renderParamFields(groups) {
+    dynamicParams.innerHTML = '';
+    currentSchemaFields = [];
+
+    groups.forEach(group => {
+      (group.items || []).forEach(item => {
+        // The prompt is already collected via the dedicated Text Prompt field above.
+        if (!item.id || item.id.toLowerCase() === 'prompt') return;
+
+        currentSchemaFields.push(item);
+        dynamicParams.appendChild(buildFieldElement(item));
+      });
+    });
+  }
+
+  function buildFieldElement(item) {
+    const wrapper = document.createElement('div');
+
+    const label = document.createElement('label');
+    label.className = 'block text-sm font-medium text-slate-300 mb-1';
+    label.htmlFor = `param-${item.id}`;
+    label.textContent = item.label || item.id;
+    if (item.required) {
+      const req = document.createElement('span');
+      req.className = 'text-red-400 ml-1';
+      req.textContent = '*';
+      label.appendChild(req);
+    }
+    wrapper.appendChild(label);
+
+    const baseClass = 'w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition';
+    let input;
+
+    const type = (item.type || '').toLowerCase();
+
+    if (FILE_PARAM_TYPES.includes(type)) {
+      // Reference media (images/video/audio) - these Wiro parameter types
+      // need an actual file picker + upload, not a plain text box, so the
+      // user can attach local files instead of typing a URL by hand.
+      wrapper.className = 'sm:col-span-2';
+      return buildFileFieldElement(item, wrapper, label, baseClass);
+    } else if (Array.isArray(item.options) && item.options.length > 0) {
+      input = document.createElement('select');
+      input.className = baseClass;
+      item.options.forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt.value;
+        option.textContent = opt.label || opt.value;
+        input.appendChild(option);
+      });
+      if (item.default != null) input.value = item.default;
+    } else if (type === 'boolean' || type === 'checkbox') {
+      wrapper.className = 'flex items-center gap-2';
+      label.className = 'text-sm font-medium text-slate-300';
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'h-4 w-4 rounded border-slate-700 bg-slate-950 text-blue-500 focus:ring-blue-500';
+      input.checked = item.default === true || item.default === 'true';
+    } else if (type === 'number' || type === 'integer' || type === 'float') {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.className = baseClass;
+      if (item.min != null) input.min = item.min;
+      if (item.max != null) input.max = item.max;
+      if (item.step != null) input.step = item.step;
+      if (item.default != null) input.value = item.default;
+    } else if (type === 'textarea' || type === 'json' || type === 'json-array') {
+      wrapper.className = 'sm:col-span-2';
+      input = document.createElement('textarea');
+      input.rows = 3;
+      input.className = baseClass;
+      if (item.default != null) input.value = item.default;
+    } else {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.className = baseClass;
+      if (item.default != null) input.value = item.default;
+    }
+
+    input.id = `param-${item.id}`;
+    input.name = item.id;
+    if (item.placeholder) input.placeholder = item.placeholder;
+    if (item.required && input.type !== 'checkbox') input.required = true;
+
+    wrapper.appendChild(input);
+
+    if (item.description || item.note) {
+      const help = document.createElement('p');
+      help.className = 'text-xs text-slate-500 mt-1';
+      help.textContent = item.description || item.note;
+      wrapper.appendChild(help);
+    }
+
+    return wrapper;
+  }
+
+  // Builds a file-picker field for `fileinput` (single file), and
+  // `multifileinput`/`combinefileinput` (multiple files, e.g. 1-30
+  // reference_images). Selecting file(s) immediately uploads them to our
+  // backend's /upload endpoint, which relays them to Wiro's File/Upload API
+  // and returns hosted URL(s) that get attached to the run parameters.
+  function buildFileFieldElement(item, wrapper, label, baseClass) {
+    const type = (item.type || '').toLowerCase();
+    const isMulti = type === 'multifileinput' || type === 'combinefileinput';
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.id = `param-${item.id}`;
+    input.name = item.id;
+    input.className = `${baseClass} file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-blue-600 file:text-white file:cursor-pointer cursor-pointer`;
+    input.accept = 'image/*,video/*,audio/*';
+    if (isMulti) input.multiple = true;
+
+    const status = document.createElement('p');
+    status.className = 'text-xs text-slate-500 mt-1';
+    status.textContent = 'No file selected.';
+
+    fileUploads[item.id] = { uploading: false, error: null, files: [] };
+
+    input.addEventListener('change', async () => {
+      const selected = Array.from(input.files || []);
+      if (!selected.length) {
+        fileUploads[item.id] = { uploading: false, error: null, files: [] };
+        status.textContent = 'No file selected.';
+        status.className = 'text-xs text-slate-500 mt-1';
+        return;
+      }
+
+      fileUploads[item.id] = { uploading: true, error: null, files: [] };
+      status.textContent = `Uploading ${selected.length} file(s)…`;
+      status.className = 'text-xs text-blue-400 mt-1';
+
+      try {
+        const uploaded = [];
+        for (const file of selected) {
+          uploaded.push(await uploadReferenceFile(file));
+        }
+        fileUploads[item.id] = { uploading: false, error: null, files: uploaded };
+        status.textContent = uploaded.map(f => f.name).join(', ');
+        status.className = 'text-xs text-emerald-400 mt-1';
+      } catch (err) {
+        fileUploads[item.id] = { uploading: false, error: err.message, files: [] };
+        status.textContent = `Upload failed: ${err.message}`;
+        status.className = 'text-xs text-red-400 mt-1';
+      }
+    });
+
+    wrapper.appendChild(input);
+    wrapper.appendChild(status);
+
+    if (item.description || item.note) {
+      const help = document.createElement('p');
+      help.className = 'text-xs text-slate-500 mt-1';
+      help.textContent = item.description || item.note;
+      wrapper.appendChild(help);
+    }
+
+    return wrapper;
+  }
+
+  async function uploadReferenceFile(file) {
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+
+    const res = await fetch(RAILWAY_UPLOAD_URL, { method: 'POST', body: formData });
+    const payload = await res.json().catch(() => ({}));
+
+    if (!res.ok || !payload.url) {
+      throw new Error(payload.error || `Server returned status ${res.status}`);
+    }
+
+    return { name: file.name, url: payload.url };
+  }
+
+  // Collects form values for /generate, using the uploaded Wiro URL(s) for
+  // file-type params instead of raw <input type="file"> values (browsers
+  // never expose local file paths/content via .value for security reasons -
+  // the actual media has to already be uploaded via uploadReferenceFile()).
+  // Throws if a required file field's upload hasn't finished/succeeded yet.
+  function collectParamValues() {
+    const params = {};
+
+    currentSchemaFields.forEach(item => {
+      const type = (item.type || '').toLowerCase();
+
+      if (FILE_PARAM_TYPES.includes(type)) {
+        const upload = fileUploads[item.id] || { uploading: false, error: null, files: [] };
+
+        if (upload.uploading) {
+          throw new Error(`"${item.label || item.id}" is still uploading. Please wait for it to finish.`);
+        }
+        if (upload.error) {
+          throw new Error(`"${item.label || item.id}" failed to upload: ${upload.error}`);
+        }
+        if (!upload.files.length) {
+          if (item.required) {
+            throw new Error(`"${item.label || item.id}" is required. Please choose a file.`);
+          }
+          return;
+        }
+
+        if (type === 'combinefileinput') {
+          // Docs: pass an array of URLs directly under the field's own id.
+          params[item.id] = upload.files.map(f => f.url);
+        } else if (type === 'multifileinput') {
+          // Docs: pass URLs via `${id}Url` as a comma-separated string.
+          params[`${item.id}Url`] = upload.files.map(f => f.url).join(',');
+        } else {
+          // fileinput: a plain URL string under the field's own id works directly.
+          params[item.id] = upload.files[0].url;
+        }
+        return;
+      }
+
+      const el = document.getElementById(`param-${item.id}`);
+      if (!el) return;
+
+      if (el.type === 'checkbox') {
+        params[item.id] = el.checked;
+      } else if (type === 'number' || type === 'integer' || type === 'float') {
+        if (el.value !== '') params[item.id] = Number(el.value);
+      } else if (el.value !== '') {
+        params[item.id] = el.value;
+      }
+    });
+
+    return params;
+  }
+
+
+  function showBrowserView() {
+    selectedModel = null;
+    modelView.classList.add('hidden');
+    browserView.classList.remove('hidden');
+
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }
+
+  backBtn.addEventListener('click', showBrowserView);
+
+  window.addEventListener('hashchange', handleRouteFromHash);
+
+  function handleRouteFromHash() {
+    const match = /^#model\/(.+)$/.exec(window.location.hash);
+    if (!match) {
+      return;
+    }
+
+    const slug = decodeURIComponent(match[1]);
+    const model = allModels.find(m => m.slug === slug);
+
+    if (model) {
+      selectedModel = model;
+      showModelView(model);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Model Run: generate handling (unchanged behavior, targeting selectedModel)
+  // ------------------------------------------------------------------
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    if (!selectedModel) {
+      showError('No model selected. Please choose a model from the browser.');
+      return;
+    }
+
+    errorBox.classList.add('hidden');
+    outputContainer.classList.add('hidden');
+
+    let paramValues;
+    try {
+      paramValues = collectParamValues();
+    } catch (err) {
+      showError(err.message);
+      return;
+    }
+
+    submitBtn.disabled = true;
+    btnText.textContent = 'Generating...';
+    spinner.classList.remove('hidden');
+
+    try {
+      const response = await fetch(RAILWAY_BACKEND_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: selectedModel.slug,
+          prompt: promptInput.value.trim(),
+          ...paramValues
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        let mediaUrl = extractMediaUrl(data);
+
+        if (mediaUrl) {
+          renderMedia(mediaUrl);
+          downloadLink.href = mediaUrl;
+          outputContainer.classList.remove('hidden');
+        } else {
+          showError('Generation finished, but no media URL could be extracted.');
+        }
+      } else {
+        showError(data.error || 'Failed to generate output.');
+      }
+
+    } catch (err) {
+      showError('Network error or server unreachable. Please check backend CORS configuration.');
+    } finally {
+      submitBtn.disabled = false;
+      btnText.textContent = 'Generate Asset';
+      spinner.classList.add('hidden');
+    }
+  });
+
+  // Helper function to extract a valid image/video URL from the /generate
+  // response. Wiro's structured `task.outputs[]` (each with a reliable
+  // `.url`) is the authoritative source - the backend already surfaces the
+  // first one as `data.mediaUrl` for convenience. `data.output`
+  // (task.debugoutput) is only a free-form debug string and doesn't always
+  // contain a directly usable URL, so it's kept only as a last-resort fallback.
+  function extractMediaUrl(data) {
+    if (data.mediaUrl) return data.mediaUrl;
+
+    const outputs = data.outputs || (data.task && data.task.outputs) || [];
+    const outputWithUrl = outputs.find(o => o && o.url);
+    if (outputWithUrl) return outputWithUrl.url;
+
+    let raw = data.output || (data.task && data.task.debugoutput);
+
+    if (!raw) return null;
+
+    if (typeof raw === 'object') {
+      return raw.url || raw.video || raw.image || raw.file || (Array.isArray(raw) ? raw[0] : null);
+    }
+
+    if (typeof raw === 'string') {
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        return raw;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed.url || parsed.video || parsed.image || parsed.file || (Array.isArray(parsed) ? parsed[0] : null);
+      } catch (e) {
+        // Fallback match for URL string inside unformatted text
+        const match = raw.match(/https?:\/\/[^\s"']+/);
+        return match ? match[0] : null;
+      }
+    }
+
+    return null;
+  }
+
+  // Helper function to render either <img> or <video> element
+  function renderMedia(url) {
+    mediaWrapper.innerHTML = '';
+
+    const isVideo = url.endsWith('.mp4') || url.endsWith('.webm') || url.includes('/video');
+
+    if (isVideo) {
+      const video = document.createElement('video');
+      video.src = url;
+      video.controls = true;
+      video.autoplay = true;
+      video.loop = true;
+      video.className = 'w-full h-full object-cover';
+      mediaWrapper.appendChild(video);
+    } else {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = 'Generated Output';
+      img.className = 'w-full h-full object-cover';
+      mediaWrapper.appendChild(img);
+    }
+  }
+
+  function showError(msg) {
+    errorMessage.textContent = typeof msg === 'object' ? JSON.stringify(msg) : msg;
+    errorBox.classList.remove('hidden');
+  }
+
+  loadModels();
+  </script>
+
+</body>
+</html>
