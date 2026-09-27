@@ -646,6 +646,19 @@
 
       const message = payload.error || `Server returned status ${res.status}`;
       if (res.status === 404) {
+        const normalizedError = typeof payload.error === 'string'
+          ? payload.error.toLowerCase()
+          : '';
+        const looksLikeMissingRoute = !normalizedError
+          || normalizedError.includes('cannot post')
+          || normalizedError.includes('route')
+          || normalizedError.includes('endpoint')
+          || normalizedError === 'not found';
+
+        if (!looksLikeMissingRoute) {
+          throw new Error(message);
+        }
+
         lastServerError = new Error(message);
         continue;
       }
