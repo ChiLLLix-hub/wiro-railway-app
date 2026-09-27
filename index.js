@@ -47,30 +47,40 @@ const upload = multer({
 const CURRENCY_EXCHANGE_RATE = Number(process.env.CURRENCY_EXCHANGE);
 const CURRENCY_SYMBOL = process.env.CURRENCY_SYMBOL || 'RM';
 
+// Only the final, converted cost is ever meant to reach the client - Wiro's
+// raw USD `totalcost` and the exchange rate itself are intentionally kept
+// out of the public response fields (finalCost/finalCostDisplay) so the
+// frontend never has a way to surface Wiro's original price or the
+// conversion rate used to arrive at the final number.
 function formatTaskCost(task) {
   const amount = task?.totalcost == null || task.totalcost === ''
     ? null
     : String(task.totalcost);
-  const result = {
-    amount,
-    display: amount == null ? '—' : (amount === '0' ? '$0 (no charge)' : `$${amount}`),
-    convertedAmount: null,
-    convertedDisplay: null,
-    currencySymbol: CURRENCY_SYMBOL,
-    exchangeRate: Number.isFinite(CURRENCY_EXCHANGE_RATE) && CURRENCY_EXCHANGE_RATE > 0 ? CURRENCY_EXCHANGE_RATE : null
-  };
+  // Fall back to a 1:1 multiplier when no CURRENCY_EXCHANGE rate is
+  // configured, so a "final cost" can always be computed/displayed without
+  // ever needing to fall back to showing Wiro's raw amount directly.
+  const rate = Number.isFinite(CURRENCY_EXCHANGE_RATE) && CURRENCY_EXCHANGE_RATE > 0
+    ? CURRENCY_EXCHANGE_RATE
+    : 1;
 
-  if (amount != null && result.exchangeRate != null) {
-    const converted = Number(amount) * result.exchangeRate;
+  let finalAmount = null;
+  let finalDisplay = '—';
+
+  if (amount != null) {
+    const converted = Number(amount) * rate;
     if (Number.isFinite(converted)) {
-      result.convertedAmount = converted;
-      result.convertedDisplay = converted === 0
+      finalAmount = converted;
+      finalDisplay = converted === 0
         ? `${CURRENCY_SYMBOL} 0 (no charge)`
         : `${CURRENCY_SYMBOL} ${converted.toFixed(2)}`;
     }
   }
 
-  return result;
+  return {
+    finalAmount,
+    finalDisplay,
+    currencySymbol: CURRENCY_SYMBOL
+  };
 }
 
 function normalizeTaskOutputs(outputs = []) {
@@ -385,12 +395,9 @@ app.post('/generate', async (req, res) => {
         output: task.debugoutput,
         mediaUrl: mediaOutput ? mediaOutput.url : null,
         taskId: task.id,
-        totalCost: taskCost.amount,
-        totalCostDisplay: taskCost.display,
-        convertedCost: taskCost.convertedAmount,
-        convertedCostDisplay: taskCost.convertedDisplay,
+        finalCost: taskCost.finalAmount,
+        finalCostDisplay: taskCost.finalDisplay,
         currencySymbol: taskCost.currencySymbol,
-        exchangeRate: taskCost.exchangeRate,
         downloads: downloadableOutputs,
         outputs,
         task: task
@@ -427,6 +434,84 @@ function extractFailureReason(task) {
   const lastLine = lines[lines.length - 1];
   return lastLine || debugOutput;
 }
+
+// A task is only "finished" once Wiro reports a non-empty `pexit` code -
+// while a task is still queued/running, `pexit` is empty/undefined and
+// `debugoutput` won't yet contain a meaningful failure reason.
+function isTaskPending(task) {
+  return !task || task.pexit == null || task.pexit === '';
+}
+
+// Retrieve a previously submitted task by its ID, so users can look up a
+// finished (or still-running/failed) generation using only the job/task
+// number they saved earlier - without needing to keep the browser tab open
+// or re-submit the same prompt.
+app.get('/task/:taskId', async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+
+  try {
+    const taskId = String(req.params.taskId || '').trim();
+    if (!taskId) {
+      return res.status(400).json({ success: false, error: 'A task ID is required.' });
+    }
+
+    const detail = await client.getTask({ taskid: taskId });
+
+    if (!detail.result) {
+      const message = detail.errors?.map(e => e.message).join(', ') || 'Failed to look up task.';
+      return res.status(502).json({ success: false, error: message });
+    }
+
+    const task = (detail.tasklist || [])[0];
+    if (!task) {
+      return res.status(404).json({ success: false, error: `No task found for ID "${taskId}".` });
+    }
+
+    if (isTaskPending(task)) {
+      return res.json({
+        success: false,
+        pending: true,
+        status: task.status,
+        taskId: task.id,
+        error: 'This task is still queued or running. Please check again shortly.'
+      });
+    }
+
+    if (task.pexit === '0') {
+      const outputs = task.outputs || [];
+      const downloadableOutputs = normalizeTaskOutputs(outputs);
+      const mediaOutput = downloadableOutputs[0] || null;
+      const taskCost = formatTaskCost(task);
+
+      return res.json({
+        success: true,
+        output: task.debugoutput,
+        mediaUrl: mediaOutput ? mediaOutput.url : null,
+        taskId: task.id,
+        finalCost: taskCost.finalAmount,
+        finalCostDisplay: taskCost.finalDisplay,
+        currencySymbol: taskCost.currencySymbol,
+        downloads: downloadableOutputs,
+        outputs,
+        task: task
+      });
+    }
+
+    const failureReason = extractFailureReason(task);
+    return res.status(200).json({
+      success: false,
+      error: failureReason,
+      debugOutput: task.debugoutput,
+      taskId: task.id,
+      task: task
+    });
+  } catch (error) {
+    if (error instanceof WiroApiError) {
+      return res.status(error.status).json({ success: false, error: error.message });
+    }
+    res.status(error.status || 500).json({ success: false, error: error.message });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
