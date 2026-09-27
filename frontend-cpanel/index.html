@@ -567,7 +567,7 @@
       const existing = (fileUploads[item.id] && Array.isArray(fileUploads[item.id].files))
         ? fileUploads[item.id].files
         : [];
-      const currentFiles = isMulti ? existing : [];
+      const currentFiles = isMulti ? existing : existing.slice(0, 1);
 
       fileUploads[item.id] = { uploading: true, error: null, files: currentFiles };
       status.textContent = `Uploading ${selected.length} file(s)…`;
@@ -603,7 +603,7 @@
       fileUploads[item.id] = {
         uploading: false,
         error: failures.length > 0 ? failures.join(' | ') : null,
-        files: isMulti ? [...currentFiles, ...uploaded] : (uploaded[0] ? [uploaded[0]] : [])
+        files: isMulti ? [...currentFiles, ...uploaded] : (uploaded[0] ? [uploaded[0]] : currentFiles)
       };
       renderUploadState();
       input.value = '';
