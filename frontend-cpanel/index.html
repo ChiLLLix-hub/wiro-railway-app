@@ -613,7 +613,7 @@
 
   async function uploadReferenceFile(file) {
     const endpoints = getUploadEndpointCandidates();
-    const notFoundErrors = [];
+    let lastServerError = null;
 
     for (const endpoint of endpoints) {
       const formData = new FormData();
@@ -623,7 +623,7 @@
       try {
         res = await fetch(endpoint, { method: 'POST', body: formData });
       } catch (networkError) {
-        continue;
+        throw new Error('Network error or server unreachable');
       }
 
       const payload = await res.json().catch(() => ({}));
@@ -639,18 +639,18 @@
 
       const message = payload.error || `Server returned status ${res.status}`;
       if (res.status === 404) {
-        notFoundErrors.push(message);
+        lastServerError = new Error(message);
         continue;
       }
 
       throw new Error(message);
     }
 
-    if (notFoundErrors.length > 0) {
-      throw new Error('Server returned status 404');
+    if (lastServerError) {
+      throw lastServerError;
     }
 
-    throw new Error('Network error or server unreachable');
+    throw new Error('Upload failed.');
   }
 
   // Collects form values for /generate, using the uploaded Wiro URL(s) for
