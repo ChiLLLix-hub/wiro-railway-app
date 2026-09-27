@@ -152,9 +152,6 @@
     const requestedMode = ALLOWED_CREDENTIAL_MODES.includes(CUSTOM_CREDENTIALS_MODE)
       ? CUSTOM_CREDENTIALS_MODE
       : 'same-origin';
-    if (requestedMode === 'include' && !isBackendSameOrigin()) {
-      throw new Error('Cross-origin credentialed uploads are not supported. Use same-origin backend or set WIRO_API_CREDENTIALS_MODE to "same-origin" or "omit".');
-    }
     return requestedMode;
   }
 
@@ -680,7 +677,7 @@
         lastNetworkErrorMessage = networkError && networkError.message
           ? networkError.message
           : 'Network error or server unreachable';
-        break;
+        continue;
       }
 
       const payload = await res.json().catch(() => ({}));
