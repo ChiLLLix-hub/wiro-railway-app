@@ -330,14 +330,17 @@ async function handleReferenceUpload(req, res) {
       return res.status(502).json({ error: 'Invalid response from Wiro upload service.' });
     }
 
-    if (!payload.result || !payload.list?.length) {
+    // Wiro's storage is content-addressed: re-uploading a file whose name
+    // (or content) already exists can come back with `result: false` and an
+    // "already exists"-style message, even though `list` still contains the
+    // existing file's metadata/URL. Previously we treated any `result:
+    // false` as a hard failure, which blocked users from ever reusing an
+    // image/video they (or anyone else) had uploaded before. As long as a
+    // reusable URL is present, treat this as success instead of an error.
+    const file = payload.list?.[0];
+    if (!file?.url) {
       const message = payload.errors?.map(e => e.message).join(', ') || 'Upload failed.';
       return res.status(502).json({ error: message });
-    }
-
-    const file = payload.list[0];
-    if (!file.url) {
-      return res.status(502).json({ error: 'Upload succeeded but no reusable file URL was returned.' });
     }
 
     return res.json({ url: file.url, name: file.name, contentType: file.contenttype, size: file.size });
@@ -376,46 +379,21 @@ app.post('/generate', async (req, res) => {
       return res.status(500).json({ error: run?.errors || 'Model execution failed' });
     }
 
-    const result = await client.waitForTask(run.socketaccesstoken);
-    const task = result.tasklist[0];
-
-    if (task && task.pexit === '0') {
-      // `task.outputs` is Wiro's structured output list (each item has a
-      // reliable `.url` + `.contenttype`), unlike `task.debugoutput` which
-      // is a free-form debug string that doesn't always contain a directly
-      // usable media URL. Surface the first output with a URL explicitly so
-      // the frontend doesn't have to guess-parse debugoutput.
-      const outputs = task.outputs || [];
-      const downloadableOutputs = normalizeTaskOutputs(outputs);
-      const mediaOutput = downloadableOutputs[0] || null;
-      const taskCost = formatTaskCost(task);
-
-      return res.json({
-        success: true,
-        output: task.debugoutput,
-        mediaUrl: mediaOutput ? mediaOutput.url : null,
-        taskId: task.id,
-        finalCost: taskCost.finalAmount,
-        finalCostDisplay: taskCost.finalDisplay,
-        currencySymbol: taskCost.currencySymbol,
-        downloads: downloadableOutputs,
-        outputs,
-        task: task
-      });
-    } else {
-      // Wiro's `task.debugoutput` is a free-form log that usually contains
-      // the actual failure reason (e.g. content-policy rejections, invalid
-      // params, upstream model errors) - surface it to the frontend instead
-      // of a generic "failed" message so users know *why* it failed.
-      const failureReason = extractFailureReason(task);
-      return res.status(500).json({
-        success: false,
-        error: failureReason,
-        debugOutput: task ? task.debugoutput : null,
-        taskId: task ? task.id : null,
-        task: task || null
-      });
-    }
+    // Respond as soon as Wiro hands back a task/job ID - do NOT block this
+    // request on client.waitForTask(). Some generations (video, long-running
+    // models, etc.) take far longer than the browser/proxy's HTTP timeout,
+    // so waiting here meant the connection dropped before a response was
+    // ever sent even though the task itself kept running (and often
+    // succeeding) server-side on Wiro - leaving the user with no taskId to
+    // look the result up with later. The frontend now polls GET
+    // /task/:taskId to learn when the task finishes.
+    return res.json({
+      success: true,
+      pending: true,
+      status: 'queued',
+      taskId: run.taskid,
+      socketaccesstoken: run.socketaccesstoken
+    });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
