@@ -561,11 +561,26 @@
     return trimmed;
   }
 
+  // Some models (e.g. "video effect" models like Storm Dance Crowd) have a
+  // *video* file as their cover/thumbnail on Wiro's own site rather than a
+  // still image - `model.image`/the first sample is an .mp4/.webm URL.
+  // Rendering that through an <img> tag silently fails (fires `error`) and
+  // the card falls back to "No preview", even though Wiro's own page shows
+  // it fine as a <video>. Detect that case so the thumbnail can be rendered
+  // with the right element.
+  function isVideoUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i.test(url);
+  }
+
   function normalizeModel(m) {
     const slug = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name || ''));
     const categories = Array.isArray(m.categories) && m.categories.length > 0
       ? m.categories
       : [m.category || m.type || 'Model'];
+    // Fall back to the first example output when no cover image is set,
+    // so the table still has *something* to preview when possible.
+    const coverUrl = sanitizeImageUrl(m.image) || sanitizeImageUrl(Array.isArray(m.samples) && m.samples[0]);
     return {
       slug,
       owner: m.owner || (slug.includes('/') ? slug.split('/')[0] : ''),
@@ -573,9 +588,8 @@
       description: m.description || '',
       categories,
       tags: Array.isArray(m.tags) ? m.tags : [],
-      // Fall back to the first example output when no cover image is set,
-      // so the table still has *something* to preview when possible.
-      image: sanitizeImageUrl(m.image) || sanitizeImageUrl(Array.isArray(m.samples) && m.samples[0]),
+      image: coverUrl,
+      imageIsVideo: isVideoUrl(coverUrl),
       dynamicprice: m.dynamicprice || null,
       approximatelycost: m.approximatelycost || null
     };
@@ -608,7 +622,21 @@
 
       const thumbWrapper = document.createElement('div');
       thumbWrapper.className = 'w-12 h-12 shrink-0 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center overflow-hidden';
-      if (model.image) {
+      if (model.image && model.imageIsVideo) {
+        const video = document.createElement('video');
+        video.src = model.image;
+        video.className = 'w-full h-full object-cover';
+        video.muted = true;
+        video.autoplay = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        video.addEventListener('error', () => {
+          video.remove();
+          thumbWrapper.appendChild(createThumbnailPlaceholder());
+        }, { once: true });
+        thumbWrapper.appendChild(video);
+      } else if (model.image) {
         const img = document.createElement('img');
         img.src = model.image;
         img.alt = model.title || model.slug;
