@@ -127,6 +127,7 @@
 
       <!-- Output Preview Area -->
       <div id="task-summary-container" class="hidden space-y-4 pt-2">
+        <p id="generation-status" class="hidden text-xs text-blue-400"></p>
         <div class="grid gap-3 md:grid-cols-2 text-sm">
           <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
             <p class="text-xs uppercase tracking-wider text-slate-500">Job / Task ID</p>
@@ -303,6 +304,7 @@
   const taskIdEl = document.getElementById('task-id');
   const copyTaskIdBtn = document.getElementById('copy-task-id-btn');
   const taskCostEl = document.getElementById('task-cost');
+  const generationStatusEl = document.getElementById('generation-status');
   const downloadsList = document.getElementById('downloads-list');
   const dynamicParams = document.getElementById('dynamic-params');
   const paramsStatus = document.getElementById('params-status');
@@ -1263,8 +1265,14 @@
   }
 
   // ------------------------------------------------------------------
-  // Model Run: generate handling (unchanged behavior, targeting selectedModel)
+  // Model Run: generate handling
   // ------------------------------------------------------------------
+
+  // Bumped on every new submission so a stale/in-flight poll loop from a
+  // previous submit can detect it's been superseded and stop updating the UI.
+  let generationPollToken = 0;
+  const GENERATION_POLL_INTERVAL_MS = 4000;
+  const GENERATION_POLL_MAX_CONSECUTIVE_ERRORS = 5;
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1287,6 +1295,8 @@
       return;
     }
 
+    const requestToken = ++generationPollToken;
+
     submitBtn.disabled = true;
     btnText.textContent = 'Generating...';
     spinner.classList.remove('hidden');
@@ -1304,8 +1314,86 @@
 
       const data = await response.json();
 
+      if (!response.ok || !data.success) {
+        showError(data.error || 'Failed to generate output.', data.debugOutput);
+        return;
+      }
+
+      // The backend now responds as soon as Wiro hands back a job/task ID -
+      // it no longer waits for the (potentially long-running) generation to
+      // finish before answering. Show the taskId immediately so it's never
+      // lost to a browser/proxy timeout, then poll for the actual result.
+      const taskId = data.taskId;
+      if (!taskId) {
+        showError('Generation started, but no job/task ID was returned.');
+        return;
+      }
+
+      showPendingTask(taskId);
+      await pollGenerationTask(taskId, requestToken);
+      return;
+    } catch (err) {
+      showError('Network error or server unreachable. Please check backend CORS configuration.');
+    }
+
+    submitBtn.disabled = false;
+    btnText.textContent = 'Generate Asset';
+    spinner.classList.add('hidden');
+  });
+
+  // Surfaces the job/task ID the instant it's known, well before the
+  // generation itself has finished, so the user always has it saved even if
+  // this tab is closed or polling below is interrupted.
+  function showPendingTask(taskId) {
+    taskIdEl.textContent = taskId;
+    copyTaskIdBtn.classList.toggle('hidden', !taskId);
+    taskCostEl.textContent = '—';
+    generationStatusEl.textContent = 'Generating… this can take a while for some models. Your job ID above is saved as soon as it exists.';
+    generationStatusEl.classList.remove('hidden');
+    taskSummaryContainer.classList.remove('hidden');
+  }
+
+  // Polls GET /task/:taskId until the generation completes, fails, or this
+  // poll loop is superseded by a newer submission (requestToken mismatch).
+  async function pollGenerationTask(taskId, requestToken) {
+    let consecutiveErrors = 0;
+
+    while (generationPollToken === requestToken) {
+      let response;
+      let data;
+      try {
+        response = await fetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+        data = await response.json();
+        consecutiveErrors = 0;
+      } catch (err) {
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= GENERATION_POLL_MAX_CONSECUTIVE_ERRORS) {
+          if (generationPollToken === requestToken) {
+            generationStatusEl.textContent = `Lost connection while checking status. Use "Retrieve a Previous Generation" below with job ID ${taskId} once you're back online.`;
+            submitBtn.disabled = false;
+            btnText.textContent = 'Generate Asset';
+            spinner.classList.add('hidden');
+          }
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+        continue;
+      }
+
+      if (generationPollToken !== requestToken) return;
+
+      if (data.pending) {
+        await new Promise(resolve => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+        continue;
+      }
+
+      generationStatusEl.classList.add('hidden');
+      submitBtn.disabled = false;
+      btnText.textContent = 'Generate Asset';
+      spinner.classList.add('hidden');
+
       if (response.ok && data.success) {
-        let mediaUrl = extractMediaUrl(data);
+        const mediaUrl = extractMediaUrl(data);
         const downloads = getDownloadableOutputs(data);
         const primaryDownloadUrl = mediaUrl || (downloads[0] && downloads[0].url) || '';
 
@@ -1327,15 +1415,9 @@
       } else {
         showError(data.error || 'Failed to generate output.', data.debugOutput);
       }
-
-    } catch (err) {
-      showError('Network error or server unreachable. Please check backend CORS configuration.');
-    } finally {
-      submitBtn.disabled = false;
-      btnText.textContent = 'Generate Asset';
-      spinner.classList.add('hidden');
+      return;
     }
-  });
+  }
 
   // Helper function to extract a valid image/video URL from the /generate
   // response. Wiro's structured `task.outputs[]` (each with a reliable
@@ -1466,6 +1548,8 @@
     copyTaskIdBtn.classList.add('hidden');
     taskCostEl.textContent = '—';
     downloadsList.innerHTML = '';
+    generationStatusEl.textContent = '';
+    generationStatusEl.classList.add('hidden');
     taskSummaryContainer.classList.add('hidden');
     downloadLink.classList.add('hidden');
     downloadLink.removeAttribute('href');
