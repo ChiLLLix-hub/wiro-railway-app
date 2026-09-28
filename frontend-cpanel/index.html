@@ -88,6 +88,12 @@
         <p id="model-description" class="text-slate-400 text-sm mt-2"></p>
       </div>
 
+      <!-- Sample Outputs (example media Wiro shows on the model's own page) -->
+      <div id="sample-outputs-container" class="hidden space-y-2">
+        <p class="text-xs uppercase tracking-wider text-slate-500">Sample outputs</p>
+        <div id="sample-outputs-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+      </div>
+
       <form id="generator-form" class="space-y-4">
 
         <!-- Prompt Input -->
@@ -127,6 +133,7 @@
 
       <!-- Output Preview Area -->
       <div id="task-summary-container" class="hidden space-y-4 pt-2">
+        <p id="generation-status" class="hidden text-xs text-blue-400"></p>
         <div class="grid gap-3 md:grid-cols-2 text-sm">
           <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
             <p class="text-xs uppercase tracking-wider text-slate-500">Job / Task ID</p>
@@ -288,6 +295,8 @@
   const modelTitleEl = document.getElementById('model-title');
   const modelSlugEl = document.getElementById('model-slug');
   const modelDescriptionEl = document.getElementById('model-description');
+  const sampleOutputsContainer = document.getElementById('sample-outputs-container');
+  const sampleOutputsGrid = document.getElementById('sample-outputs-grid');
   const form = document.getElementById('generator-form');
   const promptInput = document.getElementById('prompt');
   const submitBtn = document.getElementById('submit-btn');
@@ -303,6 +312,7 @@
   const taskIdEl = document.getElementById('task-id');
   const copyTaskIdBtn = document.getElementById('copy-task-id-btn');
   const taskCostEl = document.getElementById('task-cost');
+  const generationStatusEl = document.getElementById('generation-status');
   const downloadsList = document.getElementById('downloads-list');
   const dynamicParams = document.getElementById('dynamic-params');
   const paramsStatus = document.getElementById('params-status');
@@ -559,11 +569,35 @@
     return trimmed;
   }
 
+  // Some models (e.g. "video effect" models like Storm Dance Crowd) have a
+  // *video* file as their cover/thumbnail on Wiro's own site rather than a
+  // still image - `model.image`/the first sample is an .mp4/.webm URL.
+  // Rendering that through an <img> tag silently fails (fires `error`) and
+  // the card falls back to "No preview", even though Wiro's own page shows
+  // it fine as a <video>. Detect that case so the thumbnail can be rendered
+  // with the right element.
+  function isVideoUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i.test(url);
+  }
+
   function normalizeModel(m) {
     const slug = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name || ''));
     const categories = Array.isArray(m.categories) && m.categories.length > 0
       ? m.categories
       : [m.category || m.type || 'Model'];
+    // Wiro's /Tool/List (and /Tool/Detail) return a `samples` array of
+    // example output URLs per model - previously only `samples[0]` was kept
+    // (as a cover-image fallback) and the rest were discarded, even though
+    // Wiro's own site shows all of them in a "Sample outputs" gallery on the
+    // model page. Keep the full, sanitized list so the model detail view can
+    // render it too.
+    const sampleUrls = Array.isArray(m.samples)
+      ? m.samples.map(sanitizeImageUrl).filter(Boolean)
+      : [];
+    // Fall back to the first example output when no cover image is set,
+    // so the table still has *something* to preview when possible.
+    const coverUrl = sanitizeImageUrl(m.image) || sampleUrls[0] || null;
     return {
       slug,
       owner: m.owner || (slug.includes('/') ? slug.split('/')[0] : ''),
@@ -571,9 +605,9 @@
       description: m.description || '',
       categories,
       tags: Array.isArray(m.tags) ? m.tags : [],
-      // Fall back to the first example output when no cover image is set,
-      // so the table still has *something* to preview when possible.
-      image: sanitizeImageUrl(m.image) || sanitizeImageUrl(Array.isArray(m.samples) && m.samples[0]),
+      image: coverUrl,
+      imageIsVideo: isVideoUrl(coverUrl),
+      samples: sampleUrls,
       dynamicprice: m.dynamicprice || null,
       approximatelycost: m.approximatelycost || null
     };
@@ -606,7 +640,21 @@
 
       const thumbWrapper = document.createElement('div');
       thumbWrapper.className = 'w-12 h-12 shrink-0 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center overflow-hidden';
-      if (model.image) {
+      if (model.image && model.imageIsVideo) {
+        const video = document.createElement('video');
+        video.src = model.image;
+        video.className = 'w-full h-full object-cover';
+        video.muted = true;
+        video.autoplay = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        video.addEventListener('error', () => {
+          video.remove();
+          thumbWrapper.appendChild(createThumbnailPlaceholder());
+        }, { once: true });
+        thumbWrapper.appendChild(video);
+      } else if (model.image) {
         const img = document.createElement('img');
         img.src = model.image;
         img.alt = model.title || model.slug;
@@ -713,6 +761,7 @@
     modelSlugEl.textContent = model.slug;
     modelDescriptionEl.textContent = model.description || '';
     modelDescriptionEl.classList.toggle('hidden', !model.description);
+    renderSampleOutputs(model.samples);
 
     errorBox.classList.add('hidden');
     outputContainer.classList.add('hidden');
@@ -725,6 +774,50 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     loadModelSchema(model);
+  }
+
+  // Wiro's own model page shows a "Sample outputs" gallery of example
+  // generations (images and/or videos) for that model - `/models` already
+  // returns this as `samples`, it just wasn't rendered anywhere. Mirror that
+  // here so users can see what a model produces before running it.
+  function renderSampleOutputs(samples) {
+    sampleOutputsGrid.innerHTML = '';
+
+    if (!Array.isArray(samples) || samples.length === 0) {
+      sampleOutputsContainer.classList.add('hidden');
+      return;
+    }
+
+    samples.forEach((url, index) => {
+      const card = document.createElement('div');
+      card.className = 'rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden aspect-square';
+
+      if (isVideoUrl(url)) {
+        const video = document.createElement('video');
+        video.src = url;
+        video.className = 'w-full h-full object-cover';
+        video.muted = true;
+        video.controls = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        video.addEventListener('error', () => card.remove(), { once: true });
+        card.appendChild(video);
+      } else {
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = `Sample output ${index + 1}`;
+        img.loading = 'lazy';
+        img.referrerPolicy = 'no-referrer';
+        img.className = 'w-full h-full object-cover';
+        img.addEventListener('error', () => card.remove(), { once: true });
+        card.appendChild(img);
+      }
+
+      sampleOutputsGrid.appendChild(card);
+    });
+
+    sampleOutputsContainer.classList.remove('hidden');
   }
 
   // ------------------------------------------------------------------
@@ -815,7 +908,15 @@
         option.textContent = opt.label || opt.value;
         input.appendChild(option);
       });
-      if (item.default != null) input.value = item.default;
+      // A <select> already auto-selects its first <option> when no value is
+      // explicitly set, so this parameter is never actually left "empty" -
+      // but make that first-option fallback explicit (matching what Wiro's
+      // own playground shows as the pre-selected default) instead of relying
+      // on incidental browser behavior, and validate that Wiro's reported
+      // `default` is actually one of the real option values before trusting it.
+      const hasValidDefault = item.default != null
+        && item.options.some(opt => String(opt.value) === String(item.default));
+      input.value = hasValidDefault ? item.default : item.options[0].value;
     } else if (type === 'boolean' || type === 'checkbox') {
       wrapper.className = 'flex items-center gap-2';
       label.className = 'text-sm font-medium text-slate-300';
@@ -1263,8 +1364,14 @@
   }
 
   // ------------------------------------------------------------------
-  // Model Run: generate handling (unchanged behavior, targeting selectedModel)
+  // Model Run: generate handling
   // ------------------------------------------------------------------
+
+  // Bumped on every new submission so a stale/in-flight poll loop from a
+  // previous submit can detect it's been superseded and stop updating the UI.
+  let generationPollToken = 0;
+  const GENERATION_POLL_INTERVAL_MS = 4000;
+  const GENERATION_POLL_MAX_CONSECUTIVE_ERRORS = 5;
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1287,6 +1394,8 @@
       return;
     }
 
+    const requestToken = ++generationPollToken;
+
     submitBtn.disabled = true;
     btnText.textContent = 'Generating...';
     spinner.classList.remove('hidden');
@@ -1304,8 +1413,86 @@
 
       const data = await response.json();
 
+      if (!response.ok || !data.success) {
+        showError(data.error || 'Failed to generate output.', data.debugOutput);
+        return;
+      }
+
+      // The backend now responds as soon as Wiro hands back a job/task ID -
+      // it no longer waits for the (potentially long-running) generation to
+      // finish before answering. Show the taskId immediately so it's never
+      // lost to a browser/proxy timeout, then poll for the actual result.
+      const taskId = data.taskId;
+      if (!taskId) {
+        showError('Generation started, but no job/task ID was returned.');
+        return;
+      }
+
+      showPendingTask(taskId);
+      await pollGenerationTask(taskId, requestToken);
+      return;
+    } catch (err) {
+      showError('Network error or server unreachable. Please check backend CORS configuration.');
+    }
+
+    submitBtn.disabled = false;
+    btnText.textContent = 'Generate Asset';
+    spinner.classList.add('hidden');
+  });
+
+  // Surfaces the job/task ID the instant it's known, well before the
+  // generation itself has finished, so the user always has it saved even if
+  // this tab is closed or polling below is interrupted.
+  function showPendingTask(taskId) {
+    taskIdEl.textContent = taskId;
+    copyTaskIdBtn.classList.toggle('hidden', !taskId);
+    taskCostEl.textContent = '—';
+    generationStatusEl.textContent = 'Generating… this can take a while for some models. Your job ID above is saved as soon as it exists.';
+    generationStatusEl.classList.remove('hidden');
+    taskSummaryContainer.classList.remove('hidden');
+  }
+
+  // Polls GET /task/:taskId until the generation completes, fails, or this
+  // poll loop is superseded by a newer submission (requestToken mismatch).
+  async function pollGenerationTask(taskId, requestToken) {
+    let consecutiveErrors = 0;
+
+    while (generationPollToken === requestToken) {
+      let response;
+      let data;
+      try {
+        response = await fetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+        data = await response.json();
+        consecutiveErrors = 0;
+      } catch (err) {
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= GENERATION_POLL_MAX_CONSECUTIVE_ERRORS) {
+          if (generationPollToken === requestToken) {
+            generationStatusEl.textContent = `Lost connection while checking status. Use "Retrieve a Previous Generation" below with job ID ${taskId} once you're back online.`;
+            submitBtn.disabled = false;
+            btnText.textContent = 'Generate Asset';
+            spinner.classList.add('hidden');
+          }
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+        continue;
+      }
+
+      if (generationPollToken !== requestToken) return;
+
+      if (data.pending) {
+        await new Promise(resolve => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+        continue;
+      }
+
+      generationStatusEl.classList.add('hidden');
+      submitBtn.disabled = false;
+      btnText.textContent = 'Generate Asset';
+      spinner.classList.add('hidden');
+
       if (response.ok && data.success) {
-        let mediaUrl = extractMediaUrl(data);
+        const mediaUrl = extractMediaUrl(data);
         const downloads = getDownloadableOutputs(data);
         const primaryDownloadUrl = mediaUrl || (downloads[0] && downloads[0].url) || '';
 
@@ -1327,15 +1514,9 @@
       } else {
         showError(data.error || 'Failed to generate output.', data.debugOutput);
       }
-
-    } catch (err) {
-      showError('Network error or server unreachable. Please check backend CORS configuration.');
-    } finally {
-      submitBtn.disabled = false;
-      btnText.textContent = 'Generate Asset';
-      spinner.classList.add('hidden');
+      return;
     }
-  });
+  }
 
   // Helper function to extract a valid image/video URL from the /generate
   // response. Wiro's structured `task.outputs[]` (each with a reliable
@@ -1466,6 +1647,8 @@
     copyTaskIdBtn.classList.add('hidden');
     taskCostEl.textContent = '—';
     downloadsList.innerHTML = '';
+    generationStatusEl.textContent = '';
+    generationStatusEl.classList.add('hidden');
     taskSummaryContainer.classList.add('hidden');
     downloadLink.classList.add('hidden');
     downloadLink.removeAttribute('href');
