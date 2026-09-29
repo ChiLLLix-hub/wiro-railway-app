@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import { randomUUID } from 'node:crypto';
+import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 
 const app = express();
@@ -308,7 +310,13 @@ async function handleReferenceUpload(req, res) {
 
     const formData = new FormData();
     const blob = new Blob([req.file.buffer], { type: req.file.mimetype || 'application/octet-stream' });
-    formData.append('file', blob, req.file.originalname || 'upload');
+    // Wiro may reject a second upload under the same filename with
+    // "filesystem-already-exist" and no reusable URL. Give each upload a
+    // unique name while keeping the extension for media type detection.
+    const originalName = req.file.originalname || 'upload';
+    const extension = extname(originalName);
+    const uploadName = `${randomUUID()}${/^\.[a-z0-9]{1,16}$/i.test(extension) ? extension : ''}`;
+    formData.append('file', blob, uploadName);
 
     const uploadUrl = `${client.baseUrl}/File/Upload`;
     // Reuse the SDK's own HMAC auth headers so this endpoint stays in sync
@@ -330,20 +338,15 @@ async function handleReferenceUpload(req, res) {
       return res.status(502).json({ error: 'Invalid response from Wiro upload service.' });
     }
 
-    // Wiro's storage is content-addressed: re-uploading a file whose name
-    // (or content) already exists can come back with `result: false` and an
-    // "already exists"-style message, even though `list` still contains the
-    // existing file's metadata/URL. Previously we treated any `result:
-    // false` as a hard failure, which blocked users from ever reusing an
-    // image/video they (or anyone else) had uploaded before. As long as a
-    // reusable URL is present, treat this as success instead of an error.
+    // Some Wiro responses report a conflict but still include a reusable
+    // file URL. Only fail when no URL was returned.
     const file = payload.list?.[0];
     if (!file?.url) {
       const message = payload.errors?.map(e => e.message).join(', ') || 'Upload failed.';
       return res.status(502).json({ error: message });
     }
 
-    return res.json({ url: file.url, name: file.name, contentType: file.contenttype, size: file.size });
+    return res.json({ url: file.url, name: originalName, contentType: file.contenttype, size: file.size });
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message });
   }
