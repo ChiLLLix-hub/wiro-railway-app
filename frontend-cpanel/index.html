@@ -880,6 +880,8 @@
     label.className = 'block text-sm font-medium text-slate-300 mb-1';
     label.htmlFor = `param-${item.id}`;
     label.textContent = item.label || item.id;
+    const type = (item.type || '').toLowerCase();
+    const isSeed = /(^|[^a-z])seed([^a-z]|$)/i.test(item.id);
     if (item.required) {
       const req = document.createElement('span');
       req.className = 'text-red-400 ml-1';
@@ -890,8 +892,6 @@
 
     const baseClass = 'w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition';
     let input;
-
-    const type = (item.type || '').toLowerCase();
 
     if (FILE_PARAM_TYPES.includes(type)) {
       // Reference media (images/video/audio) - these Wiro parameter types
@@ -945,21 +945,60 @@
       if (item.default != null) input.value = item.default;
     }
 
+    const autoSeed = isSeed && (input.type === 'number' || input.type === 'text');
+    if (autoSeed) {
+      input.value = generateRandomSeed(item);
+    }
+
     input.id = `param-${item.id}`;
     input.name = item.id;
-    if (item.placeholder) input.placeholder = item.placeholder;
+    if (item.placeholder) {
+      input.placeholder = item.placeholder;
+    } else if (input.type === 'text') {
+      input.placeholder = `Enter ${item.label || item.id}`;
+    }
     if (item.required && input.type !== 'checkbox') input.required = true;
 
+    const guidance = [item.description, item.note].find(value => typeof value === 'string' && value.trim()) || '';
+    if (guidance) {
+      label.title = guidance;
+      input.title = guidance;
+    }
     wrapper.appendChild(input);
 
-    if (item.description || item.note) {
+    if (item.description || item.note || autoSeed) {
       const help = document.createElement('p');
       help.className = 'text-xs text-slate-500 mt-1';
-      help.textContent = item.description || item.note;
+      help.textContent = [item.description || item.note, autoSeed ? 'A random seed is generated automatically; change it to reproduce a result.' : '']
+        .filter(Boolean)
+        .join(' ');
       wrapper.appendChild(help);
     }
 
     return wrapper;
+  }
+
+  function generateRandomSeed(item) {
+    const min = item.min != null && Number.isSafeInteger(Number(item.min))
+      ? Number(item.min)
+      : 0;
+    const max = item.max != null && Number.isSafeInteger(Number(item.max))
+      ? Number(item.max)
+      : 2147483647;
+    const lower = min <= max ? min : 0;
+    const upper = min <= max ? max : 2147483647;
+    const range = upper - lower + 1;
+
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function' && range <= 0x100000000) {
+      const limit = Math.floor(0x100000000 / range) * range;
+      const value = new Uint32Array(1);
+      do {
+        window.crypto.getRandomValues(value);
+      } while (value[0] >= limit);
+      return lower + (value[0] % range);
+    }
+
+    return lower + Math.floor(Math.random() * range);
   }
 
   // Builds a file-picker field for `fileinput` (single file), and
