@@ -1292,10 +1292,16 @@
 
       if (el.type === 'checkbox') {
         params[item.id] = el.checked;
-      } else if (type === 'number' || type === 'integer' || type === 'float') {
-        if (el.value !== '') params[item.id] = Number(el.value);
-      } else if (el.value !== '') {
-        params[item.id] = el.value;
+      } else {
+        if (item.required && String(el.value).trim() === '') {
+          throw new Error(`"${item.label || item.id}" is required. Please fill in this field.`);
+        }
+
+        if (type === 'number' || type === 'integer' || type === 'float') {
+          if (el.value !== '') params[item.id] = Number(el.value);
+        } else if (el.value !== '') {
+          params[item.id] = el.value;
+        }
       }
     });
 
