@@ -930,7 +930,7 @@
       input.className = baseClass;
       if (item.min != null) input.min = item.min;
       if (item.max != null) input.max = item.max;
-      if (item.step != null) input.step = item.step;
+      input.step = item.step != null ? item.step : (type === 'integer' ? 1 : 'any');
       if (item.default != null) input.value = item.default;
     } else if (type === 'textarea' || type === 'json' || type === 'json-array') {
       wrapper.className = 'sm:col-span-2';
@@ -1337,7 +1337,20 @@
         }
 
         if (type === 'number' || type === 'integer' || type === 'float') {
-          if (el.value !== '') params[item.id] = Number(el.value);
+          if (el.value !== '') {
+            let value = Number(el.value);
+            if (Number.isFinite(value)) {
+              // Integer parameters (e.g. video duration in seconds, inference
+              // steps) must never be negative or fractional, so round and
+              // clamp to the field's declared range here rather than trusting
+              // native number-input validation alone (it doesn't stop users
+              // from typing "-1" or "7.5").
+              if (type === 'integer') value = Math.round(value);
+              if (item.min != null) value = Math.max(Number(item.min), value);
+              if (item.max != null) value = Math.min(Number(item.max), value);
+              params[item.id] = value;
+            }
+          }
         } else if (el.value !== '') {
           params[item.id] = el.value;
         }

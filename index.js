@@ -222,6 +222,52 @@ async function lookupToolDetail(modelSlug) {
   return (result.tool || [])[0] || null;
 }
 
+// Several Wiro model parameters are reported with overly-permissive
+// min/max/default values (or none at all), which lets the UI submit
+// negative/decimal values that the underlying (mostly video) models don't
+// actually support, or leaves important quality knobs unset. Normalize the
+// handful of well-known offenders here so every model gets sane, whole-number
+// constraints and sensible defaults regardless of what Wiro itself reports.
+const DURATION_SECONDS_MIN = 5;
+const DURATION_SECONDS_MAX = 30;
+const DEFAULT_INFERENCE_STEPS = 10;
+const DEFAULT_GUIDANCE_SCALE = 2;
+
+function normalizeParameterItem(item) {
+  const text = `${item.id || ''} ${item.label || ''}`.toLowerCase();
+  const type = (item.type || '').toLowerCase();
+  const isNumeric = type === 'number' || type === 'integer' || type === 'float';
+
+  if (!isNumeric) return item;
+
+  const isDurationField = /duration/.test(text) || /\bsecond/.test(text);
+  const isInferenceStepsField = /step/.test(text) && (/infer/.test(text) || /\bsteps?\b/.test(text));
+  const isGuidanceScaleField = /guidance/.test(text);
+
+  const normalized = { ...item };
+
+  if (isDurationField) {
+    // Video length must be a whole number of seconds between 5 and 30 -
+    // no negative values and no fractional seconds.
+    normalized.type = 'integer';
+    normalized.min = DURATION_SECONDS_MIN;
+    normalized.max = DURATION_SECONDS_MAX;
+    normalized.step = 1;
+    const currentDefault = Number(normalized.default);
+    if (!Number.isFinite(currentDefault) || currentDefault < DURATION_SECONDS_MIN || currentDefault > DURATION_SECONDS_MAX) {
+      normalized.default = DURATION_SECONDS_MIN;
+    } else {
+      normalized.default = Math.round(currentDefault);
+    }
+  } else if (isInferenceStepsField) {
+    normalized.default = DEFAULT_INFERENCE_STEPS;
+  } else if (isGuidanceScaleField) {
+    normalized.default = DEFAULT_GUIDANCE_SCALE;
+  }
+
+  return normalized;
+}
+
 // Model Schema Endpoint
 // Different models expect different (often required) parameters -
 // e.g. bytedance/seedream-v4 requires `size`, `maxImages` and `watermark`,
@@ -258,7 +304,7 @@ app.get('/models/schema', async (req, res) => {
 
     const parameters = (tool.parameters || []).map(group => ({
       title: group.title,
-      items: (group.items || []).map(item => ({
+      items: (group.items || []).map(item => normalizeParameterItem({
         id: item.id,
         type: item.type,
         label: item.label,
