@@ -470,6 +470,13 @@ const DEFAULT_SAFETY_TOLERANCE = 2;
 // Common square output resolution, used as a fallback default for bare
 // width/height number fields that Wiro reports without a default.
 const DEFAULT_IMAGE_DIMENSION = 1024;
+// "Maximum number of output images" (e.g. SeeDream V4's `maxImages`) must be
+// a whole number of at least 1 (0/negative makes no sense) and we cap it at
+// 15 to keep batch-generation runs (and their cost) bounded, regardless of
+// whatever wider/looser range Wiro's own schema reports.
+const OUTPUT_IMAGE_COUNT_MIN = 1;
+const OUTPUT_IMAGE_COUNT_MAX = 15;
+const DEFAULT_OUTPUT_IMAGE_COUNT = 1;
 
 function normalizeParameterItem(item) {
   const text = `${item.id || ''} ${item.label || ''}`.toLowerCase();
@@ -506,6 +513,11 @@ function normalizeParameterItem(item) {
   const isSafetyToleranceField = /safety/.test(text) && /toleran/.test(text);
   const isWidthField = /\bwidth\b/.test(text) && !/\bheight\b/.test(text);
   const isHeightField = /\bheight\b/.test(text) && !/\bwidth\b/.test(text);
+  // Matches both the Wiro field id (e.g. `maxImages`, `numberOfOutputs`) and
+  // its human label (e.g. "Maximum number of output images").
+  const isOutputImageCountField = IMAGE_COUNT_PARAM_KEYS.includes(normalizePriceKey(item.id))
+    || (/\bnumber\b/.test(text) && /\boutput/.test(text) && /\bimages?\b/.test(text))
+    || (/\bmax(imum)?\b/.test(text) && /\bimages?\b/.test(text) && !isWidthField && !isHeightField);
 
   const normalized = { ...item };
 
@@ -553,6 +565,19 @@ function normalizeParameterItem(item) {
     const currentDefault = Number(normalized.default);
     if (!Number.isFinite(currentDefault) || currentDefault <= 0) {
       normalized.default = DEFAULT_IMAGE_DIMENSION;
+    }
+  } else if (isOutputImageCountField) {
+    // Whole number of images only, bounded to 1-15 - no 0/negative counts
+    // and no runaway batch sizes regardless of what Wiro's own schema reports.
+    normalized.type = 'integer';
+    normalized.min = OUTPUT_IMAGE_COUNT_MIN;
+    normalized.max = OUTPUT_IMAGE_COUNT_MAX;
+    normalized.step = 1;
+    const currentDefault = Number(normalized.default);
+    if (!Number.isFinite(currentDefault) || currentDefault < OUTPUT_IMAGE_COUNT_MIN || currentDefault > OUTPUT_IMAGE_COUNT_MAX) {
+      normalized.default = DEFAULT_OUTPUT_IMAGE_COUNT;
+    } else {
+      normalized.default = Math.round(currentDefault);
     }
   }
 
@@ -775,6 +800,14 @@ app.post('/generate', async (req, res) => {
       // fail with "Request parameter [seed] must be between 0 and 9999999".
       if (/(^|[^a-z])seed([^a-z]|$)/i.test(key) && value !== '' && Number.isFinite(Number(value))) {
         options[key] = Math.min(9999999, Math.max(0, Math.round(Number(value))));
+        continue;
+      }
+
+      // Defensive clamp: "Maximum number of output images" must be a whole
+      // number between 1 and 15 - reject/clamp anything outside that range
+      // even if a request bypasses the form's own min/max constraints.
+      if (IMAGE_COUNT_PARAM_KEYS.includes(normalizePriceKey(key)) && value !== '' && Number.isFinite(Number(value))) {
+        options[key] = Math.min(15, Math.max(1, Math.round(Number(value))));
         continue;
       }
 
