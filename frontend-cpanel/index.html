@@ -249,6 +249,7 @@
   const RAILWAY_BACKEND_URL = `${BACKEND_BASE_URL}/generate`;
   const RAILWAY_MODELS_URL = `${BACKEND_BASE_URL}/models`;
   const RAILWAY_SCHEMA_URL = `${BACKEND_BASE_URL}/models/schema`;
+  const RAILWAY_ESTIMATE_URL = `${BACKEND_BASE_URL}/models/estimate-cost`;
   const RAILWAY_UPLOAD_URL = `${BACKEND_BASE_URL}/upload`;
   const RAILWAY_TASK_URL = `${BACKEND_BASE_URL}/task`;
 
@@ -858,6 +859,11 @@
       const groups = Array.isArray(payload.parameters) ? payload.parameters : [];
       renderParamFields(groups);
       renderEstimatedCost(payload.estimatedCost);
+      // The schema response's estimate was computed before field defaults
+      // were known, so immediately refine it using the actual rendered
+      // default values (e.g. default duration/resolution) - Wiro pricing
+      // depends on those, not just a static baseline.
+      refreshEstimatedCost(model.slug);
     } catch (err) {
       if (requestToken !== schemaRequestToken) return;
       console.error('Could not fetch model schema:', err);
@@ -884,6 +890,45 @@
     estimatedCostEl.textContent = estimate.estimatedDisplay || '—';
     estimatedCostContainer.classList.remove('hidden');
   }
+
+  // Wiro's pricing is rarely flat - it follows duration, resolution and
+  // similar parameters, so re-fetch the estimate (debounced) whenever the
+  // user edits a form field, instead of only showing a static baseline.
+  let estimateDebounceTimer = null;
+  const ESTIMATE_DEBOUNCE_MS = 400;
+
+  function scheduleEstimateRefresh() {
+    if (!selectedModel) return;
+    clearTimeout(estimateDebounceTimer);
+    estimateDebounceTimer = setTimeout(() => refreshEstimatedCost(selectedModel.slug), ESTIMATE_DEBOUNCE_MS);
+  }
+
+  async function refreshEstimatedCost(modelSlug) {
+    let params;
+    try {
+      params = collectParamValues();
+    } catch {
+      // Incomplete/invalid input (e.g. a required file still uploading) -
+      // leave whatever estimate is currently shown rather than erroring out.
+      return;
+    }
+
+    try {
+      const url = `${RAILWAY_ESTIMATE_URL}?model=${encodeURIComponent(modelSlug)}&params=${encodeURIComponent(JSON.stringify(params))}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      if (!selectedModel || selectedModel.slug !== modelSlug) return; // Model changed meanwhile.
+      renderEstimatedCost(payload.estimatedCost);
+    } catch (err) {
+      console.error('Could not refresh cost estimate:', err);
+    }
+  }
+
+  // Event delegation covers every dynamically-rendered param field (number,
+  // select, checkbox, text) without needing a listener per field.
+  dynamicParams.addEventListener('input', scheduleEstimateRefresh);
+  dynamicParams.addEventListener('change', scheduleEstimateRefresh);
 
   function renderParamFields(groups) {
     dynamicParams.innerHTML = '';
