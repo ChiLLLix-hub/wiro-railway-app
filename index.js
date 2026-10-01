@@ -138,14 +138,40 @@ function findParamValueByKey(lookup, key) {
   return fuzzyMatch ? lookup[fuzzyMatch] : undefined;
 }
 
+// Several image models let the user request more than one image per run
+// (e.g. SeeDream V4's `maxImages`), and Wiro bills per output on those
+// models - so a per-run price (dynamicprice's base entry, a flat
+// `approximatelycost`, or an undetected `cps`-with-no-duration case) needs
+// multiplying by the requested count to stay accurate. Match the user's
+// current params against these common "how many outputs" field names
+// (exact normalized match only - deliberately not fuzzy, since a bare "n"
+// or "count" is too ambiguous to safely assume it means image count).
+const IMAGE_COUNT_PARAM_KEYS = [
+  'maximages', 'numimages', 'numberofimages', 'imagescount', 'imagecount',
+  'countimages', 'batchsize', 'numoutputs', 'outputcount', 'numberofoutputs',
+  'outputsnumber', 'imagesnumber', 'numimagestogenerate', 'imagestogenerate'
+];
+
+function findImageCountValue(lookup) {
+  for (const key of IMAGE_COUNT_PARAM_KEYS) {
+    if (lookup[key] == null) continue;
+    const count = Number(lookup[key]);
+    if (Number.isFinite(count) && count > 0) return { key, count };
+  }
+  return null;
+}
+
 // Wiro's video/image pricing is rarely a single flat number - `dynamicprice`
 // lists one price per parameter combination (e.g. per resolution/duration
 // tier), and some entries use an `"QUANTITY:<n>"` marker meaning "multiply
 // this per-unit price by the matching numeric param" (e.g. price-per-second
-// times the selected duration). Match the current form values against each
-// entry and return the cost of the best (most specific) match, so the
-// estimate actually follows duration/resolution/etc. instead of always
-// showing the same "starting from" number.
+// times the selected duration, or price-per-output times the requested
+// image count). Match the current form values against each entry and return
+// the cost of the best (most specific) match - along with which input keys
+// were already consumed as quantity multipliers, so the caller can avoid
+// double-multiplying by image count below - so the estimate actually
+// follows duration/resolution/image-count/etc. instead of always showing
+// the same "starting from" number.
 function matchDynamicPriceCostUsd(dynamicprice, params) {
   if (!dynamicprice) return null;
 
@@ -168,13 +194,14 @@ function matchDynamicPriceCostUsd(dynamicprice, params) {
     const keys = Object.keys(inputs);
 
     if (keys.length === 0) {
-      if (!best) best = { score: 0, cost: price };
+      if (!best) best = { score: 0, cost: price, quantityKeys: new Set() };
       continue;
     }
 
     let matched = true;
     let multiplier = 1;
     let score = 0;
+    const quantityKeys = new Set();
 
     for (const key of keys) {
       const rawValue = inputs[key];
@@ -184,6 +211,7 @@ function matchDynamicPriceCostUsd(dynamicprice, params) {
         const qty = Number(paramValue);
         if (!Number.isFinite(qty) || qty <= 0) { matched = false; break; }
         multiplier *= qty;
+        quantityKeys.add(normalizePriceKey(key));
         score += 1;
       } else if (paramValue != null && String(paramValue).toLowerCase() === String(rawValue).toLowerCase()) {
         score += 2; // Exact matches are a stronger signal than quantity scaling.
@@ -197,11 +225,11 @@ function matchDynamicPriceCostUsd(dynamicprice, params) {
 
     const cost = price * multiplier;
     if (Number.isFinite(cost) && (!best || score > best.score)) {
-      best = { score, cost };
+      best = { score, cost, quantityKeys };
     }
   }
 
-  return best ? best.cost : null;
+  return best ? { cost: best.cost, quantityKeys: best.quantityKeys } : null;
 }
 
 // Best-effort USD estimate for a model, straight from Wiro's own
@@ -209,30 +237,44 @@ function matchDynamicPriceCostUsd(dynamicprice, params) {
 // conversion is applied. When `params` (the user's current form values) are
 // supplied, prefers a cost computed from the actual dynamicprice/cps method
 // (e.g. per-second * duration) over a static baseline, since real Wiro
-// pricing is rarely flat - it follows duration, resolution and similar
-// parameters.
+// pricing is rarely flat - it follows duration, resolution, requested image
+// count and similar parameters.
 function estimateBaseCostUsd(tool, params) {
   if (!tool) return null;
 
+  const lookup = buildParamLookup(params);
+  const imageCount = findImageCountValue(lookup);
+
+  // Applies the "how many outputs" multiplier to a per-run/per-output base
+  // cost, unless `skipKey` (an input key dynamicprice already scaled by)
+  // is the same field, which would otherwise double-count it.
+  const withImageCount = (cost, skipKey) => {
+    if (cost == null) return cost;
+    if (!imageCount) return cost;
+    if (skipKey && skipKey.has(imageCount.key)) return cost;
+    return cost * imageCount.count;
+  };
+
   const dynamicMatch = matchDynamicPriceCostUsd(tool.dynamicprice, params);
-  if (dynamicMatch != null && dynamicMatch > 0) return dynamicMatch;
+  if (dynamicMatch?.cost != null && dynamicMatch.cost > 0) {
+    return withImageCount(dynamicMatch.cost, dynamicMatch.quantityKeys);
+  }
 
   const dynamicBaseline = parseDynamicPriceBaseline(tool.dynamicprice);
-  if (dynamicBaseline != null && dynamicBaseline > 0) return dynamicBaseline;
+  if (dynamicBaseline != null && dynamicBaseline > 0) return withImageCount(dynamicBaseline);
 
   const cps = Number(tool.cps);
   if (Number.isFinite(cps) && cps > 0) {
-    const lookup = buildParamLookup(params);
     const durationValue = findParamValueByKey(lookup, 'duration') ?? findParamValueByKey(lookup, 'seconds');
     const duration = Number(durationValue);
     // cps is a per-second rate - the real cost of a run scales with the
     // selected duration, so multiply rather than reporting the flat rate.
-    if (Number.isFinite(duration) && duration > 0) return cps * duration;
+    if (Number.isFinite(duration) && duration > 0) return withImageCount(cps * duration);
   }
 
   const approx = Number(tool.approximatelycost);
-  if (Number.isFinite(approx) && approx > 0) return approx;
-  if (Number.isFinite(cps) && cps > 0) return cps;
+  if (Number.isFinite(approx) && approx > 0) return withImageCount(approx);
+  if (Number.isFinite(cps) && cps > 0) return withImageCount(cps);
 
   return null;
 }
