@@ -85,19 +85,6 @@ function formatTaskCost(task) {
   };
 }
 
-// Optional margin multiplier for the *pre-generation* cost estimate shown to
-// users before they click Generate. Set COST_MARGIN_MULTIPLIER (e.g. 1.2 for
-// a 20% margin) in Railway's environment variables; it defaults to 1 (no
-// margin) when unset or invalid. This is independent from CURRENCY_EXCHANGE,
-// which only converts the *actual, already-charged* cost after a task runs.
-const COST_MARGIN_MULTIPLIER = Number(process.env.COST_MARGIN_MULTIPLIER);
-
-function getCostMarginMultiplier() {
-  return Number.isFinite(COST_MARGIN_MULTIPLIER) && COST_MARGIN_MULTIPLIER > 0
-    ? COST_MARGIN_MULTIPLIER
-    : 1;
-}
-
 // Wiro's `dynamicprice` field (when present) is a JSON array of
 // `{ price, priceMethod, inputs }` entries - one per parameter combination
 // (e.g. per resolution/duration). Without knowing the user's exact selected
@@ -135,8 +122,9 @@ function estimateBaseCostUsd(tool) {
 
 // Wiro's raw USD pricing fields are intentionally never sent to the
 // frontend as-is (same principle as formatTaskCost() below) - only this
-// margin-adjusted, currency-converted estimate is, so the operator's margin
-// and Wiro's original rate can't be reverse-engineered by the client.
+// currency-converted estimate is, using the same CURRENCY_EXCHANGE rate (and
+// CURRENCY_SYMBOL) already used to convert the actual post-run cost, so any
+// margin baked into that rate applies consistently to both.
 function formatEstimatedCost(tool) {
   const baseUsd = estimateBaseCostUsd(tool);
 
@@ -147,7 +135,7 @@ function formatEstimatedCost(tool) {
   const rate = Number.isFinite(CURRENCY_EXCHANGE_RATE) && CURRENCY_EXCHANGE_RATE > 0
     ? CURRENCY_EXCHANGE_RATE
     : 1;
-  const converted = baseUsd * getCostMarginMultiplier() * rate;
+  const converted = baseUsd * rate;
 
   return {
     estimatedAmount: Number.isFinite(converted) ? converted : null,
