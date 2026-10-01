@@ -112,6 +112,13 @@
         <div id="params-status" class="hidden text-slate-400 text-xs"></div>
         <div id="dynamic-params" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
 
+        <!-- Pre-generation cost estimate (Wiro's own pricing signals, with
+             our margin multiplier + currency conversion applied server-side) -->
+        <div id="estimated-cost-container" class="hidden bg-slate-900/70 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-sm">
+          <span class="text-slate-400">Estimated Cost</span>
+          <span id="estimated-cost" class="font-semibold text-slate-200">—</span>
+        </div>
+
         <button
           type="submit"
           id="submit-btn"
@@ -316,6 +323,8 @@
   const downloadsList = document.getElementById('downloads-list');
   const dynamicParams = document.getElementById('dynamic-params');
   const paramsStatus = document.getElementById('params-status');
+  const estimatedCostContainer = document.getElementById('estimated-cost-container');
+  const estimatedCostEl = document.getElementById('estimated-cost');
 
   // Retrieve-by-task-ID elements
   const lookupForm = document.getElementById('lookup-form');
@@ -834,6 +843,7 @@
     fileUploads = {};
     dynamicParams.innerHTML = '';
     paramsStatus.classList.add('hidden');
+    renderEstimatedCost(null);
 
     try {
       const res = await fetch(`${RAILWAY_SCHEMA_URL}?model=${encodeURIComponent(model.slug)}`, { cache: 'no-store' });
@@ -847,6 +857,7 @@
 
       const groups = Array.isArray(payload.parameters) ? payload.parameters : [];
       renderParamFields(groups);
+      renderEstimatedCost(payload.estimatedCost);
     } catch (err) {
       if (requestToken !== schemaRequestToken) return;
       console.error('Could not fetch model schema:', err);
@@ -856,6 +867,21 @@
       paramsStatus.textContent = `Could not load extra parameters for this model (${err.message}). Only the prompt will be sent.`;
       paramsStatus.classList.remove('hidden');
     }
+  }
+
+  // Shows the margin-adjusted, currency-converted pre-generation cost
+  // estimate (computed server-side from Wiro's own pricing signals) above
+  // the Generate button, so users know roughly what a run will cost before
+  // they click it. Hidden entirely when no estimate is available.
+  function renderEstimatedCost(estimate) {
+    if (!estimate || estimate.estimatedAmount == null) {
+      estimatedCostContainer.classList.add('hidden');
+      estimatedCostEl.textContent = '—';
+      return;
+    }
+
+    estimatedCostEl.textContent = estimate.estimatedDisplay || '—';
+    estimatedCostContainer.classList.remove('hidden');
   }
 
   function renderParamFields(groups) {

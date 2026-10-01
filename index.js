@@ -85,6 +85,77 @@ function formatTaskCost(task) {
   };
 }
 
+// Optional margin multiplier for the *pre-generation* cost estimate shown to
+// users before they click Generate. Set COST_MARGIN_MULTIPLIER (e.g. 1.2 for
+// a 20% margin) in Railway's environment variables; it defaults to 1 (no
+// margin) when unset or invalid. This is independent from CURRENCY_EXCHANGE,
+// which only converts the *actual, already-charged* cost after a task runs.
+const COST_MARGIN_MULTIPLIER = Number(process.env.COST_MARGIN_MULTIPLIER);
+
+function getCostMarginMultiplier() {
+  return Number.isFinite(COST_MARGIN_MULTIPLIER) && COST_MARGIN_MULTIPLIER > 0
+    ? COST_MARGIN_MULTIPLIER
+    : 1;
+}
+
+// Wiro's `dynamicprice` field (when present) is a JSON array of
+// `{ price, priceMethod, inputs }` entries - one per parameter combination
+// (e.g. per resolution/duration). Without knowing the user's exact selected
+// parameters we can't pick the precise entry, so use the lowest listed price
+// as a conservative "starting from" baseline estimate.
+function parseDynamicPriceBaseline(dynamicprice) {
+  if (!dynamicprice) return null;
+  try {
+    const parsed = typeof dynamicprice === 'string' ? JSON.parse(dynamicprice) : dynamicprice;
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    const prices = parsed.map(entry => Number(entry.price)).filter(Number.isFinite);
+    return prices.length ? Math.min(...prices) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Best-effort baseline USD estimate for a model, straight from Wiro's own
+// /Tool/List /Tool/Detail pricing signals (dynamicprice > approximatelycost
+// > cps), before any margin or currency conversion is applied.
+function estimateBaseCostUsd(tool) {
+  if (!tool) return null;
+
+  const dynamicBaseline = parseDynamicPriceBaseline(tool.dynamicprice);
+  if (dynamicBaseline != null && dynamicBaseline > 0) return dynamicBaseline;
+
+  const approx = Number(tool.approximatelycost);
+  if (Number.isFinite(approx) && approx > 0) return approx;
+
+  const cps = Number(tool.cps);
+  if (Number.isFinite(cps) && cps > 0) return cps;
+
+  return null;
+}
+
+// Wiro's raw USD pricing fields are intentionally never sent to the
+// frontend as-is (same principle as formatTaskCost() below) - only this
+// margin-adjusted, currency-converted estimate is, so the operator's margin
+// and Wiro's original rate can't be reverse-engineered by the client.
+function formatEstimatedCost(tool) {
+  const baseUsd = estimateBaseCostUsd(tool);
+
+  if (baseUsd == null) {
+    return { estimatedAmount: null, estimatedDisplay: 'Not available', currencySymbol: CURRENCY_SYMBOL };
+  }
+
+  const rate = Number.isFinite(CURRENCY_EXCHANGE_RATE) && CURRENCY_EXCHANGE_RATE > 0
+    ? CURRENCY_EXCHANGE_RATE
+    : 1;
+  const converted = baseUsd * getCostMarginMultiplier() * rate;
+
+  return {
+    estimatedAmount: Number.isFinite(converted) ? converted : null,
+    estimatedDisplay: Number.isFinite(converted) ? `~${CURRENCY_SYMBOL} ${converted.toFixed(2)}` : 'Not available',
+    currencySymbol: CURRENCY_SYMBOL
+  };
+}
+
 function normalizeTaskOutputs(outputs = []) {
   return outputs
     .filter(output => output && output.url)
@@ -232,6 +303,11 @@ const DURATION_SECONDS_MIN = 5;
 const DURATION_SECONDS_MAX = 30;
 const DEFAULT_INFERENCE_STEPS = 10;
 const DEFAULT_GUIDANCE_SCALE = 2;
+// "Shift" (a.k.a. flow-matching/noise schedule shift) controls how a
+// diffusion/video model's scheduler spaces its timesteps - left unset it
+// defaults to whatever Wiro's own form happens to report (often nothing at
+// all), so give it the same commonly-used baseline as other quality knobs.
+const DEFAULT_SHIFT = 5;
 
 function normalizeParameterItem(item) {
   const text = `${item.id || ''} ${item.label || ''}`.toLowerCase();
@@ -243,6 +319,7 @@ function normalizeParameterItem(item) {
   const isDurationField = /duration/.test(text) || /\bsecond/.test(text);
   const isInferenceStepsField = /step/.test(text) && (/infer/.test(text) || /\bsteps?\b/.test(text));
   const isGuidanceScaleField = /guidance/.test(text);
+  const isShiftField = /\bshift\b/.test(text);
 
   const normalized = { ...item };
 
@@ -263,6 +340,8 @@ function normalizeParameterItem(item) {
     normalized.default = DEFAULT_INFERENCE_STEPS;
   } else if (isGuidanceScaleField) {
     normalized.default = DEFAULT_GUIDANCE_SCALE;
+  } else if (isShiftField) {
+    normalized.default = DEFAULT_SHIFT;
   }
 
   return normalized;
@@ -325,7 +404,8 @@ app.get('/models/schema', async (req, res) => {
       slug: requestedModel,
       title: tool.title,
       description: tool.seodescription || tool.description || '',
-      parameters
+      parameters,
+      estimatedCost: formatEstimatedCost(tool)
     });
   } catch (error) {
     if (error instanceof WiroApiError) {
