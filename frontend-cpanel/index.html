@@ -112,6 +112,13 @@
         <div id="params-status" class="hidden text-slate-400 text-xs"></div>
         <div id="dynamic-params" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
 
+        <!-- Pre-generation cost estimate (Wiro's own pricing signals, with
+             CURRENCY_EXCHANGE conversion applied server-side) -->
+        <div id="estimated-cost-container" class="hidden bg-slate-900/70 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-sm">
+          <span class="text-slate-400">Estimated Cost</span>
+          <span id="estimated-cost" class="font-semibold text-slate-200">—</span>
+        </div>
+
         <button
           type="submit"
           id="submit-btn"
@@ -316,6 +323,8 @@
   const downloadsList = document.getElementById('downloads-list');
   const dynamicParams = document.getElementById('dynamic-params');
   const paramsStatus = document.getElementById('params-status');
+  const estimatedCostContainer = document.getElementById('estimated-cost-container');
+  const estimatedCostEl = document.getElementById('estimated-cost');
 
   // Retrieve-by-task-ID elements
   const lookupForm = document.getElementById('lookup-form');
@@ -834,6 +843,7 @@
     fileUploads = {};
     dynamicParams.innerHTML = '';
     paramsStatus.classList.add('hidden');
+    renderEstimatedCost(null);
 
     try {
       const res = await fetch(`${RAILWAY_SCHEMA_URL}?model=${encodeURIComponent(model.slug)}`, { cache: 'no-store' });
@@ -847,6 +857,7 @@
 
       const groups = Array.isArray(payload.parameters) ? payload.parameters : [];
       renderParamFields(groups);
+      renderEstimatedCost(payload.estimatedCost);
     } catch (err) {
       if (requestToken !== schemaRequestToken) return;
       console.error('Could not fetch model schema:', err);
@@ -856,6 +867,22 @@
       paramsStatus.textContent = `Could not load extra parameters for this model (${err.message}). Only the prompt will be sent.`;
       paramsStatus.classList.remove('hidden');
     }
+  }
+
+  // Shows the currency-converted (CURRENCY_EXCHANGE/CURRENCY_SYMBOL)
+  // pre-generation cost estimate (computed server-side from Wiro's own
+  // pricing signals) above the Generate button, so users know roughly what
+  // a run will cost before they click it. Hidden entirely when no estimate
+  // is available.
+  function renderEstimatedCost(estimate) {
+    if (!estimate || estimate.estimatedAmount == null) {
+      estimatedCostContainer.classList.add('hidden');
+      estimatedCostEl.textContent = '—';
+      return;
+    }
+
+    estimatedCostEl.textContent = estimate.estimatedDisplay || '—';
+    estimatedCostContainer.classList.remove('hidden');
   }
 
   function renderParamFields(groups) {
@@ -930,7 +957,7 @@
       input.className = baseClass;
       if (item.min != null) input.min = item.min;
       if (item.max != null) input.max = item.max;
-      if (item.step != null) input.step = item.step;
+      input.step = item.step != null ? item.step : (type === 'integer' ? 1 : 'any');
       if (item.default != null) input.value = item.default;
     } else if (type === 'textarea' || type === 'json' || type === 'json-array') {
       wrapper.className = 'sm:col-span-2';
@@ -1337,7 +1364,20 @@
         }
 
         if (type === 'number' || type === 'integer' || type === 'float') {
-          if (el.value !== '') params[item.id] = Number(el.value);
+          if (el.value !== '') {
+            let value = Number(el.value);
+            if (Number.isFinite(value)) {
+              // Integer parameters (e.g. video duration in seconds, inference
+              // steps) must never be negative or fractional, so round and
+              // clamp to the field's declared range here rather than trusting
+              // native number-input validation alone (it doesn't stop users
+              // from typing "-1" or "7.5").
+              if (type === 'integer') value = Math.round(value);
+              if (item.min != null) value = Math.max(Number(item.min), value);
+              if (item.max != null) value = Math.min(Number(item.max), value);
+              params[item.id] = value;
+            }
+          }
         } else if (el.value !== '') {
           params[item.id] = el.value;
         }

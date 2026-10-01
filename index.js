@@ -85,6 +85,65 @@ function formatTaskCost(task) {
   };
 }
 
+// Wiro's `dynamicprice` field (when present) is a JSON array of
+// `{ price, priceMethod, inputs }` entries - one per parameter combination
+// (e.g. per resolution/duration). Without knowing the user's exact selected
+// parameters we can't pick the precise entry, so use the lowest listed price
+// as a conservative "starting from" baseline estimate.
+function parseDynamicPriceBaseline(dynamicprice) {
+  if (!dynamicprice) return null;
+  try {
+    const parsed = typeof dynamicprice === 'string' ? JSON.parse(dynamicprice) : dynamicprice;
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    const prices = parsed.map(entry => Number(entry.price)).filter(Number.isFinite);
+    return prices.length ? Math.min(...prices) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Best-effort baseline USD estimate for a model, straight from Wiro's own
+// /Tool/List /Tool/Detail pricing signals (dynamicprice > approximatelycost
+// > cps), before any margin or currency conversion is applied.
+function estimateBaseCostUsd(tool) {
+  if (!tool) return null;
+
+  const dynamicBaseline = parseDynamicPriceBaseline(tool.dynamicprice);
+  if (dynamicBaseline != null && dynamicBaseline > 0) return dynamicBaseline;
+
+  const approx = Number(tool.approximatelycost);
+  if (Number.isFinite(approx) && approx > 0) return approx;
+
+  const cps = Number(tool.cps);
+  if (Number.isFinite(cps) && cps > 0) return cps;
+
+  return null;
+}
+
+// Wiro's raw USD pricing fields are intentionally never sent to the
+// frontend as-is (same principle as formatTaskCost() below) - only this
+// currency-converted estimate is, using the same CURRENCY_EXCHANGE rate (and
+// CURRENCY_SYMBOL) already used to convert the actual post-run cost, so any
+// margin baked into that rate applies consistently to both.
+function formatEstimatedCost(tool) {
+  const baseUsd = estimateBaseCostUsd(tool);
+
+  if (baseUsd == null) {
+    return { estimatedAmount: null, estimatedDisplay: 'Not available', currencySymbol: CURRENCY_SYMBOL };
+  }
+
+  const rate = Number.isFinite(CURRENCY_EXCHANGE_RATE) && CURRENCY_EXCHANGE_RATE > 0
+    ? CURRENCY_EXCHANGE_RATE
+    : 1;
+  const converted = baseUsd * rate;
+
+  return {
+    estimatedAmount: Number.isFinite(converted) ? converted : null,
+    estimatedDisplay: Number.isFinite(converted) ? `~${CURRENCY_SYMBOL} ${converted.toFixed(2)}` : 'Not available',
+    currencySymbol: CURRENCY_SYMBOL
+  };
+}
+
 function normalizeTaskOutputs(outputs = []) {
   return outputs
     .filter(output => output && output.url)
@@ -222,6 +281,60 @@ async function lookupToolDetail(modelSlug) {
   return (result.tool || [])[0] || null;
 }
 
+// Several Wiro model parameters are reported with overly-permissive
+// min/max/default values (or none at all), which lets the UI submit
+// negative/decimal values that the underlying (mostly video) models don't
+// actually support, or leaves important quality knobs unset. Normalize the
+// handful of well-known offenders here so every model gets sane, whole-number
+// constraints and sensible defaults regardless of what Wiro itself reports.
+const DURATION_SECONDS_MIN = 5;
+const DURATION_SECONDS_MAX = 30;
+const DEFAULT_INFERENCE_STEPS = 10;
+const DEFAULT_GUIDANCE_SCALE = 2;
+// "Shift" (a.k.a. flow-matching/noise schedule shift) controls how a
+// diffusion/video model's scheduler spaces its timesteps - left unset it
+// defaults to whatever Wiro's own form happens to report (often nothing at
+// all), so give it the same commonly-used baseline as other quality knobs.
+const DEFAULT_SHIFT = 5;
+
+function normalizeParameterItem(item) {
+  const text = `${item.id || ''} ${item.label || ''}`.toLowerCase();
+  const type = (item.type || '').toLowerCase();
+  const isNumeric = type === 'number' || type === 'integer' || type === 'float';
+
+  if (!isNumeric) return item;
+
+  const isDurationField = /duration/.test(text) || /\bsecond/.test(text);
+  const isInferenceStepsField = /step/.test(text) && (/infer/.test(text) || /\bsteps?\b/.test(text));
+  const isGuidanceScaleField = /guidance/.test(text);
+  const isShiftField = /\bshift\b/.test(text);
+
+  const normalized = { ...item };
+
+  if (isDurationField) {
+    // Video length must be a whole number of seconds between 5 and 30 -
+    // no negative values and no fractional seconds.
+    normalized.type = 'integer';
+    normalized.min = DURATION_SECONDS_MIN;
+    normalized.max = DURATION_SECONDS_MAX;
+    normalized.step = 1;
+    const currentDefault = Number(normalized.default);
+    if (!Number.isFinite(currentDefault) || currentDefault < DURATION_SECONDS_MIN || currentDefault > DURATION_SECONDS_MAX) {
+      normalized.default = DURATION_SECONDS_MIN;
+    } else {
+      normalized.default = Math.round(currentDefault);
+    }
+  } else if (isInferenceStepsField) {
+    normalized.default = DEFAULT_INFERENCE_STEPS;
+  } else if (isGuidanceScaleField) {
+    normalized.default = DEFAULT_GUIDANCE_SCALE;
+  } else if (isShiftField) {
+    normalized.default = DEFAULT_SHIFT;
+  }
+
+  return normalized;
+}
+
 // Model Schema Endpoint
 // Different models expect different (often required) parameters -
 // e.g. bytedance/seedream-v4 requires `size`, `maxImages` and `watermark`,
@@ -258,7 +371,7 @@ app.get('/models/schema', async (req, res) => {
 
     const parameters = (tool.parameters || []).map(group => ({
       title: group.title,
-      items: (group.items || []).map(item => ({
+      items: (group.items || []).map(item => normalizeParameterItem({
         id: item.id,
         type: item.type,
         label: item.label,
@@ -279,7 +392,8 @@ app.get('/models/schema', async (req, res) => {
       slug: requestedModel,
       title: tool.title,
       description: tool.seodescription || tool.description || '',
-      parameters
+      parameters,
+      estimatedCost: formatEstimatedCost(tool)
     });
   } catch (error) {
     if (error instanceof WiroApiError) {
