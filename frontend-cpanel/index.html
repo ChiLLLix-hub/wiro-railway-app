@@ -182,6 +182,8 @@
 
           <div id="sample-outputs-dots" class="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5"></div>
         </div>
+
+        <div id="sample-outputs-thumbs" class="flex items-center gap-2 overflow-x-auto py-1"></div>
       </div>
 
       <!-- "Generate from model" - the prompt + parameters + cost estimate +
@@ -434,6 +436,61 @@
     { slug: 'bytedance/animatediff', title: 'AnimateDiff (ByteDance)', categories: ['text-to-video'] }
   ];
 
+  // ------------------------------------------------------------------
+  // Hero carousel: manual override
+  // ------------------------------------------------------------------
+  // By default the hero carousel auto-populates from the top-rated models
+  // (see loadFeaturedModels() below). To curate it manually instead, list
+  // entries here - when non-empty, this list completely replaces the
+  // automatic "popular" selection for the hero carousel only (the Popular
+  // AI Tools grid underneath keeps using live "popular" data either way).
+  //
+  // Each entry can be either:
+  //   - a plain "owner/project" slug string (exactly as used in the Model
+  //     Browser / model URLs) - its title/image/description are looked up
+  //     automatically from the live model data, e.g.:
+  //       'google/nano-banana-2'
+  //   - an object to fully (or partially) hardcode a slide, optionally
+  //     still backed by a slug for the "Start Creating" button and for
+  //     filling in any fields you don't override, e.g.:
+  //       {
+  //         slug: 'google/nano-banana-2',
+  //         title: 'Nano Banana 2',
+  //         subtitle: 'Fast multi-reference image editing.',
+  //         image: 'https://example.com/custom-hero-image.jpg'
+  //       }
+  const MANUAL_HERO_SLIDES = [
+    // 'google/nano-banana-2',
+    // 'bytedance/seedream-v4',
+  ];
+
+  // Resolves MANUAL_HERO_SLIDES (slugs and/or hardcoded slide objects) into
+  // the same {title, subtitle, image, slug} shape renderHeroSlides() expects,
+  // looking up any slug-only fields it needs from the live model data.
+  async function resolveManualHeroSlides() {
+    const resolved = await Promise.all(MANUAL_HERO_SLIDES.map(async (entry) => {
+      const isOverride = entry && typeof entry === 'object';
+      const slug = isOverride ? entry.slug : entry;
+      const base = slug ? await fetchModelBySlug(slug) : null;
+
+      if (!base && !isOverride) return null; // plain slug that couldn't be resolved - skip it
+
+      const { primary } = base ? classifyCategories(base.categories) : { primary: null };
+      const title = (isOverride && entry.title) || (base && base.title) || slug;
+      const image = (isOverride && entry.image) || (base && base.image);
+      if (!title || !image) return null; // nothing usable to show as a slide
+
+      return {
+        title,
+        subtitle: (isOverride && entry.subtitle) || (base && base.description) ||
+          (base ? `Try ${formatCategoryLabel(primary || base.categories[0])} with ${base.title}.` : ''),
+        image,
+        slug: (isOverride && entry.slug) || (base && base.slug) || ''
+      };
+    }));
+    return resolved.filter(Boolean);
+  }
+
   // View elements
   const heroSectionEl = document.getElementById('hero-section');
   const categoryNavSectionEl = document.getElementById('category-nav');
@@ -457,6 +514,7 @@
   const sampleOutputsContainer = document.getElementById('sample-outputs-container');
   const sampleOutputsSlidesEl = document.getElementById('sample-outputs-slides');
   const sampleOutputsDotsEl = document.getElementById('sample-outputs-dots');
+  const sampleOutputsThumbsEl = document.getElementById('sample-outputs-thumbs');
   const sampleOutputsPrevBtn = document.getElementById('sample-outputs-prev');
   const sampleOutputsNextBtn = document.getElementById('sample-outputs-next');
   const form = document.getElementById('generator-form');
@@ -692,6 +750,13 @@
       groups: ['LLM'],
       color: 'text-emerald-400',
       icon: '<path fill-rule="evenodd" clip-rule="evenodd" d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>'
+    },
+    {
+      key: '3d',
+      label: '3D',
+      groups: ['3D'],
+      color: 'text-teal-400',
+      icon: '<path d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.3 6.2 3.4L12 11.4 5.8 8 12 4.3zM5 9.7l6 3.3v6.8l-6-3.3V9.7zm8 10.1v-6.8l6-3.3v6.7l-6 3.4z"/>'
     }
   ];
   let activeBigCategory = null; // key of the selected BIG_ICON_CATEGORIES entry, or null = all
@@ -1042,6 +1107,7 @@
     sampleOutputsIndex = 0;
     sampleOutputsSlidesEl.innerHTML = '';
     sampleOutputsDotsEl.innerHTML = '';
+    sampleOutputsThumbsEl.innerHTML = '';
 
     if (sampleOutputsData.length === 0) {
       sampleOutputsContainer.classList.add('hidden');
@@ -1052,7 +1118,10 @@
       const panel = document.createElement('div');
       panel.className = 'relative w-full shrink-0 aspect-video bg-slate-900';
 
-      if (isVideoUrl(url)) {
+      const model3DExt = get3DExtension(url);
+      if (model3DExt) {
+        render3DModel(url, panel);
+      } else if (isVideoUrl(url)) {
         const video = document.createElement('video');
         video.src = url;
         video.className = 'absolute inset-0 w-full h-full object-cover';
@@ -1081,16 +1150,56 @@
       dot.setAttribute('aria-label', `Go to sample ${index + 1}`);
       dot.addEventListener('click', () => goToSampleSlide(index));
       sampleOutputsDotsEl.appendChild(dot);
+
+      sampleOutputsThumbsEl.appendChild(renderSampleOutputThumb(url, index, model3DExt));
     });
 
     updateSampleOutputsTransform();
     sampleOutputsContainer.classList.remove('hidden');
   }
 
+  // Builds one small clickable thumbnail (below the main frame) per sample
+  // output, mirroring Wiro's own model page gallery strip - clicking a
+  // thumbnail jumps the big main preview above to that sample, same as
+  // clicking its dot.
+  function renderSampleOutputThumb(url, index, model3DExt) {
+    const thumb = document.createElement('button');
+    thumb.type = 'button';
+    thumb.dataset.sampleIndex = String(index);
+    thumb.setAttribute('aria-label', `Show sample ${index + 1}`);
+    thumb.className = 'relative w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition focus:outline-none focus:ring-2 focus:ring-blue-500';
+
+    if (model3DExt) {
+      thumb.innerHTML = '<div class="absolute inset-0 flex items-center justify-center bg-slate-800 text-teal-300 text-[10px] font-semibold uppercase">3D</div>';
+    } else if (isVideoUrl(url)) {
+      const video = document.createElement('video');
+      video.src = url;
+      video.className = 'absolute inset-0 w-full h-full object-cover';
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      thumb.appendChild(video);
+    } else {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = `Sample output ${index + 1} thumbnail`;
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.className = 'absolute inset-0 w-full h-full object-cover';
+      thumb.appendChild(img);
+    }
+
+    thumb.addEventListener('click', () => goToSampleSlide(index));
+    return thumb;
+  }
+
   function updateSampleOutputsTransform() {
     sampleOutputsSlidesEl.style.transform = `translateX(-${sampleOutputsIndex * 100}%)`;
     [...sampleOutputsDotsEl.children].forEach((dot, i) => {
       dot.className = `h-1.5 rounded-full transition-all ${i === sampleOutputsIndex ? 'w-5 bg-white' : 'w-1.5 bg-white/40 hover:bg-white/70'}`;
+    });
+    [...sampleOutputsThumbsEl.children].forEach((thumb, i) => {
+      thumb.className = `relative w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${i === sampleOutputsIndex ? 'border-blue-500' : 'border-slate-800 hover:border-slate-600'}`;
     });
   }
 
@@ -1754,7 +1863,11 @@
     resolveModelBySlug(slug);
   }
 
-  async function resolveModelBySlug(slug) {
+  // Looks up a single model by its exact "owner/project" slug via the
+  // /models search endpoint, returning the normalized model or null if it
+  // couldn't be found/fetched. Shared by deep-link resolution and the
+  // manual hero carousel override below.
+  async function fetchModelBySlug(slug) {
     const [, ...rest] = slug.split('/');
     const projectPart = rest.join('/') || slug;
 
@@ -1768,14 +1881,18 @@
 
       const payload = await res.json();
       const modelList = Array.isArray(payload) ? payload : (payload.data || []);
-      const match = modelList.map(normalizeModel).find(m => m.slug === slug);
-
-      if (match) {
-        selectedModel = match;
-        showModelView(match);
-      }
+      return modelList.map(normalizeModel).find(m => m.slug === slug) || null;
     } catch (err) {
-      console.error('Could not resolve deep-linked model:', slug, err);
+      console.error('Could not resolve model by slug:', slug, err);
+      return null;
+    }
+  }
+
+  async function resolveModelBySlug(slug) {
+    const match = await fetchModelBySlug(slug);
+    if (match) {
+      selectedModel = match;
+      showModelView(match);
     }
   }
 
@@ -2417,10 +2534,28 @@
   }
 
   // Fetches a small, independent "trending" slice of the catalog (sorted by
-  // rating, across all categories) to power both the Popular AI Tools grid
-  // and the hero carousel, regardless of whatever filter is currently
-  // active in the Model Browser below.
+  // rating, across all categories) to power the Popular AI Tools grid, and
+  // (unless MANUAL_HERO_SLIDES overrides it below) the hero carousel too,
+  // regardless of whatever filter is currently active in the Model Browser
+  // below.
   async function loadFeaturedModels() {
+    let heroIsManual = false;
+
+    if (MANUAL_HERO_SLIDES.length > 0) {
+      try {
+        const manualSlides = await resolveManualHeroSlides();
+        if (manualSlides.length > 0) {
+          heroSlideData = manualSlides;
+          renderHeroSlides();
+          heroIsManual = true;
+        } else {
+          console.warn('MANUAL_HERO_SLIDES is set but none of its entries could be resolved; falling back to automatic hero selection.');
+        }
+      } catch (err) {
+        console.error('Could not resolve MANUAL_HERO_SLIDES, falling back to automatic hero selection:', err);
+      }
+    }
+
     try {
       const url = new URL(RAILWAY_MODELS_URL);
       url.searchParams.set('start', '0');
@@ -2438,20 +2573,22 @@
 
       renderPopularTools(normalized.slice(0, 5));
 
-      heroSlideData = normalized.slice(0, 5).map(m => {
-        const { primary } = classifyCategories(m.categories);
-        return {
-          title: m.title,
-          subtitle: m.description || `Try ${formatCategoryLabel(primary || m.categories[0])} with ${m.title}.`,
-          image: m.image,
-          slug: m.slug
-        };
-      });
-      renderHeroSlides();
+      if (!heroIsManual) {
+        heroSlideData = normalized.slice(0, 5).map(m => {
+          const { primary } = classifyCategories(m.categories);
+          return {
+            title: m.title,
+            subtitle: m.description || `Try ${formatCategoryLabel(primary || m.categories[0])} with ${m.title}.`,
+            image: m.image,
+            slug: m.slug
+          };
+        });
+        renderHeroSlides();
+      }
     } catch (err) {
       console.error('Could not load featured models for Popular Tools / hero:', err);
       renderPopularTools(FALLBACK_MODELS.map(normalizeModel));
-      renderHeroSlides(); // falls back to HERO_FALLBACK_SLIDES
+      if (!heroIsManual) renderHeroSlides(); // falls back to HERO_FALLBACK_SLIDES
     } finally {
       restartHeroAutoplay();
     }
