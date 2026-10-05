@@ -692,6 +692,13 @@
       groups: ['LLM'],
       color: 'text-emerald-400',
       icon: '<path fill-rule="evenodd" clip-rule="evenodd" d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>'
+    },
+    {
+      key: '3d',
+      label: '3D',
+      groups: ['3D'],
+      color: 'text-teal-400',
+      icon: '<path d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.3 6.2 3.4L12 11.4 5.8 8 12 4.3zM5 9.7l6 3.3v6.8l-6-3.3V9.7zm8 10.1v-6.8l6-3.3v6.7l-6 3.4z"/>'
     }
   ];
   let activeBigCategory = null; // key of the selected BIG_ICON_CATEGORIES entry, or null = all
@@ -1052,7 +1059,10 @@
       const panel = document.createElement('div');
       panel.className = 'relative w-full shrink-0 aspect-video bg-slate-900';
 
-      if (isVideoUrl(url)) {
+      const model3DExt = get3DExtension(url);
+      if (model3DExt) {
+        render3DModel(url, panel);
+      } else if (isVideoUrl(url)) {
         const video = document.createElement('video');
         video.src = url;
         video.className = 'absolute inset-0 w-full h-full object-cover';
