@@ -78,7 +78,7 @@
     <!-- ==================== BIG-ICON CATEGORY NAV ==================== -->
     <section id="category-nav" class="space-y-4">
       <h2 class="text-lg font-bold text-slate-100">Browse by Category</h2>
-      <div id="category-icons" class="flex flex-wrap items-center gap-3 md:gap-4"></div>
+      <div id="category-icons" class="flex flex-wrap items-center justify-center gap-3 md:gap-4"></div>
     </section>
 
     <!-- ==================== POPULAR AI TOOLS ==================== -->
@@ -2202,8 +2202,12 @@
     slides.forEach((slide, index) => {
       const panel = document.createElement('div');
       panel.className = 'relative w-full shrink-0 aspect-[16/7] md:aspect-[16/6] bg-slate-900';
+      const isVideo = isVideoUrl(slide.image);
+      const mediaHtml = isVideo
+        ? `<video src="${slide.image}" class="absolute inset-0 w-full h-full object-cover" muted autoplay loop playsinline preload="metadata"></video>`
+        : `<img src="${slide.image}" alt="${escapeHtml(slide.title)}" class="absolute inset-0 w-full h-full object-cover" loading="${index === 0 ? 'eager' : 'lazy'}" referrerpolicy="no-referrer" />`;
       panel.innerHTML = `
-        <img src="${slide.image}" alt="${escapeHtml(slide.title)}" class="absolute inset-0 w-full h-full object-cover" loading="${index === 0 ? 'eager' : 'lazy'}" referrerpolicy="no-referrer" />
+        ${mediaHtml}
         <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent"></div>
         <div class="absolute inset-x-0 bottom-0 p-5 md:p-10 max-w-xl space-y-2">
           <h3 class="text-xl md:text-3xl font-extrabold text-white drop-shadow">${escapeHtml(slide.title)}</h3>
@@ -2274,7 +2278,9 @@
       card.className = 'group relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900 aspect-[3/4] text-left focus:outline-none focus:ring-2 focus:ring-blue-500';
 
       const imgHtml = model.image
-        ? `<img src="${model.image}" alt="${escapeHtml(model.title)}" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 w-full h-full object-cover transition duration-300 group-hover:scale-105" />`
+        ? (model.imageIsVideo
+            ? `<video src="${model.image}" class="absolute inset-0 w-full h-full object-cover transition duration-300 group-hover:scale-105" muted autoplay loop playsinline preload="metadata"></video>`
+            : `<img src="${model.image}" alt="${escapeHtml(model.title)}" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 w-full h-full object-cover transition duration-300 group-hover:scale-105" />`)
         : `<div class="absolute inset-0 flex items-center justify-center text-slate-600 text-xs">No preview</div>`;
 
       card.innerHTML = `
