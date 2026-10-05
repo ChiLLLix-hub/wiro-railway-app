@@ -4,6 +4,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI Multi-Model Studio</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google's <model-viewer> web component - renders glTF/GLB/USDZ 3D
+       model outputs in-browser with built-in orbit (drag) and zoom
+       (scroll/pinch) controls, similar to Wiro's own 3D result preview. -->
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <!--<link rel="icon" href="https://files.svgcdn.io/flat-ui/rocket.svg" type="image/x-icon"> -->
   <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
   <style>
@@ -153,15 +157,18 @@
     </div>
 
     <!-- ==================== MODEL RUN VIEW ==================== -->
-    <div id="model-view" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
-      <div>
+    <div id="model-view" class="hidden space-y-6">
+      <div class="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8">
         <h2 id="model-title" class="text-xl font-bold text-slate-100"></h2>
         <p id="model-slug" class="text-slate-400 text-xs font-mono mt-1"></p>
         <p id="model-description" class="text-slate-400 text-sm mt-2"></p>
       </div>
 
       <!-- Sample Outputs (example media Wiro shows on the model's own page) -->
-      <div id="sample-outputs-container" class="hidden space-y-2">
+      <!-- Kept in its own top-level card, separate from the prompt/generate
+           card below, so the example gallery reads as "what this model can
+           produce" rather than being visually merged into the input form. -->
+      <div id="sample-outputs-container" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-2">
         <p class="text-xs uppercase tracking-wider text-slate-500">Sample outputs</p>
         <div class="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950 group">
           <div id="sample-outputs-slides" class="flex"></div>
@@ -177,9 +184,15 @@
         </div>
       </div>
 
+      <!-- "Generate from model" - the prompt + parameters + cost estimate +
+           submit button, in its own dedicated card, separate from both the
+           sample outputs above and the generated result below. -->
+      <div class="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
+      <h3 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generate from Model</h3>
       <form id="generator-form" class="space-y-4">
 
         <!-- Prompt Input -->
+
         <div>
           <label for="prompt" class="block text-sm font-medium text-slate-300 mb-1">Text Prompt</label>
           <textarea
@@ -193,6 +206,9 @@
 
         <!-- Dynamic Model Parameters (rendered from the model's schema) -->
         <div id="params-status" class="hidden text-slate-400 text-xs"></div>
+        <div id="three-d-hint" class="hidden text-xs text-teal-300 bg-teal-500/10 border border-teal-500/30 rounded-xl p-3">
+          This is a 3D model tool - mesh/texture quality parameters below have sane defaults pre-filled, and the cost estimate updates automatically as you change them. The generated 3D model can be viewed and rotated/zoomed right here once ready.
+        </div>
         <div id="dynamic-params" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
 
         <!-- Pre-generation cost estimate (Wiro's own pricing signals, with
@@ -220,9 +236,14 @@
         <p id="error-message" class="font-medium"></p>
         <pre id="error-debug" class="hidden whitespace-pre-wrap break-words text-red-300/80 text-xs bg-red-950/40 border border-red-500/30 rounded-lg p-3"></pre>
       </div>
+      </div>
 
+      <!-- Generated Result - its own card, fully separate from the
+           prompt/parameters card above, so the result doesn't read as part
+           of the input form. -->
+      <div id="result-card" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
       <!-- Output Preview Area -->
-      <div id="task-summary-container" class="hidden space-y-4 pt-2">
+      <div id="task-summary-container" class="hidden space-y-4">
         <p id="generation-status" class="hidden text-xs text-blue-400"></p>
         <div class="grid gap-3 md:grid-cols-2 text-sm">
           <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
@@ -244,14 +265,14 @@
         </div>
       </div>
 
-      <div id="output-container" class="hidden space-y-4 pt-2">
+      <div id="output-container" class="hidden space-y-4">
         <div class="flex justify-between items-center">
           <h2 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Result</h2>
         </div>
 
         <!-- Dynamic Media Container -->
         <div id="media-wrapper" class="relative bg-slate-950 rounded-xl overflow-hidden border border-slate-800 aspect-square flex items-center justify-center">
-          <!-- JS will dynamically insert <img> or <video> here -->
+          <!-- JS will dynamically insert <img>, <video> or <model-viewer> here -->
         </div>
 
         <div class="flex items-center justify-between text-sm pt-1">
@@ -265,9 +286,10 @@
           <div id="downloads-list" class="space-y-2 text-sm text-slate-300"></div>
         </div>
       </div>
+      </div>
 
       <!-- ============ RETRIEVE A PREVIOUS GENERATION BY JOB/TASK ID ============ -->
-      <div class="border-t border-slate-800 pt-6 mt-2">
+      <div class="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8">
         <h3 class="text-sm font-semibold text-slate-200">Retrieve a Previous Generation</h3>
         <p class="text-slate-400 text-xs mt-1">Already have a job/task ID from an earlier generation? Look it up here to view its result, or the failure reason if it didn't succeed.</p>
 
@@ -320,6 +342,7 @@
         </div>
       </div>
     </div>
+
 
   </div>
 
@@ -444,6 +467,7 @@
   const errorBox = document.getElementById('error-box');
   const errorMessage = document.getElementById('error-message');
   const errorDebug = document.getElementById('error-debug');
+  const resultCard = document.getElementById('result-card');
   const taskSummaryContainer = document.getElementById('task-summary-container');
   const outputContainer = document.getElementById('output-container');
   const mediaWrapper = document.getElementById('media-wrapper');
@@ -455,6 +479,7 @@
   const downloadsList = document.getElementById('downloads-list');
   const dynamicParams = document.getElementById('dynamic-params');
   const paramsStatus = document.getElementById('params-status');
+  const threeDHint = document.getElementById('three-d-hint');
   const estimatedCostContainer = document.getElementById('estimated-cost-container');
   const estimatedCostEl = document.getElementById('estimated-cost');
 
@@ -989,6 +1014,7 @@
 
     errorBox.classList.add('hidden');
     outputContainer.classList.add('hidden');
+    resultCard.classList.add('hidden');
     promptInput.value = '';
     resetOutputDetails();
     resetLookupResult();
@@ -1085,12 +1111,19 @@
   // `duration`/`aspect_ratio`). Rather than hardcoding those per model, we
   // fetch the model's schema from the backend and render matching form
   // fields, so required parameters are always collected before submitting.
+  function isThreeDModel(categories) {
+    const list = Array.isArray(categories) ? categories : [];
+    const threeDGroup = CATEGORY_GROUPS.find(g => g.label === '3D');
+    return !!threeDGroup && list.some(c => threeDGroup.slugs.includes(c));
+  }
+
   async function loadModelSchema(model) {
     const requestToken = ++schemaRequestToken;
     currentSchemaFields = [];
     fileUploads = {};
     dynamicParams.innerHTML = '';
     paramsStatus.classList.add('hidden');
+    threeDHint.classList.add('hidden');
     renderEstimatedCost(null);
 
     try {
@@ -1106,6 +1139,7 @@
       const groups = Array.isArray(payload.parameters) ? payload.parameters : [];
       renderParamFields(groups);
       renderEstimatedCost(payload.estimatedCost);
+      threeDHint.classList.toggle('hidden', !isThreeDModel(payload.categories || model.categories));
       // The schema response's estimate was computed before field defaults
       // were known, so immediately refine it using the actual rendered
       // default values (e.g. default duration/resolution) - Wiro pricing
@@ -1766,6 +1800,7 @@
     errorBox.classList.add('hidden');
     taskSummaryContainer.classList.add('hidden');
     outputContainer.classList.add('hidden');
+    resultCard.classList.add('hidden');
     resetOutputDetails();
 
     let paramValues;
@@ -1832,6 +1867,7 @@
     generationStatusEl.textContent = 'Generating… this can take a while for some models. Your job ID above is saved as soon as it exists.';
     generationStatusEl.classList.remove('hidden');
     taskSummaryContainer.classList.remove('hidden');
+    resultCard.classList.remove('hidden');
   }
 
   // Polls GET /task/:taskId until the generation completes, fails, or this
@@ -2037,6 +2073,38 @@
     mediaWrapper.innerHTML = '';
   }
 
+  // 3D model file extensions Wiro's 3D tools (e.g. image-to-3d/text-to-3d
+  // generators) commonly output. `.glb`/`.gltf`/`.usdz` are natively
+  // renderable in-browser by the `<model-viewer>` web component (mouse-drag
+  // to orbit, scroll/pinch to zoom - no extra Three.js wiring needed);
+  // other mesh formats (obj/fbx/stl/ply) aren't, so those just fall back to
+  // the download link below instead of a broken/blank viewer.
+  const MODEL_VIEWER_EXTENSIONS = ['glb', 'gltf', 'usdz'];
+
+  function get3DExtension(url) {
+    const clean = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(String(url || ''));
+    const ext = (clean && clean[1] || '').toLowerCase();
+    return MODEL_VIEWER_EXTENSIONS.includes(ext) ? ext : null;
+  }
+
+  // Renders an interactive 3D preview (orbit by dragging, zoom with
+  // scroll/pinch) using Google's `<model-viewer>` web component, mirroring
+  // how Wiro's own site previews 3D model outputs in-browser.
+  function render3DModel(url, wrapper) {
+    const viewer = document.createElement('model-viewer');
+    viewer.setAttribute('src', url);
+    viewer.setAttribute('camera-controls', '');
+    viewer.setAttribute('touch-action', 'pan-y');
+    viewer.setAttribute('auto-rotate', '');
+    viewer.setAttribute('shadow-intensity', '1');
+    viewer.setAttribute('exposure', '1');
+    viewer.setAttribute('ar', '');
+    viewer.setAttribute('alt', 'Generated 3D model - drag to orbit, scroll/pinch to zoom');
+    viewer.className = 'w-full h-full bg-slate-950';
+    viewer.style.setProperty('--poster-color', 'transparent');
+    wrapper.appendChild(viewer);
+  }
+
   function renderEmptyMediaState() {
     mediaWrapper.innerHTML = '<p class="px-6 text-center text-sm text-slate-400">Generation completed. Preview unavailable, but the generated file links are ready below.</p>';
   }
@@ -2050,9 +2118,16 @@
       .replaceAll("'", '&#39;');
   }
 
-  // Helper function to render either <img> or <video> element
+  // Helper function to render an <img>, <video> or interactive 3D
+  // <model-viewer> element, depending on the output's file type.
   function renderMedia(url, wrapper = mediaWrapper) {
     wrapper.innerHTML = '';
+
+    const model3DExt = get3DExtension(url);
+    if (model3DExt) {
+      render3DModel(url, wrapper);
+      return;
+    }
 
     const isVideo = url.endsWith('.mp4') || url.endsWith('.webm') || url.includes('/video');
 
@@ -2083,6 +2158,7 @@
       errorDebug.classList.add('hidden');
     }
     errorBox.classList.remove('hidden');
+    resultCard.classList.remove('hidden');
   }
 
   // ------------------------------------------------------------------
