@@ -138,6 +138,24 @@ function findParamValueByKey(lookup, key) {
   return fuzzyMatch ? lookup[fuzzyMatch] : undefined;
 }
 
+// Normalizes a dynamicprice entry's `inputs` *value* (e.g. a resolution like
+// "1024x1024", "1024X1024", "1024 x 1024" or "1024*1024") for comparison
+// against the user's selected param value. Different Wiro tools format the
+// same resolution/aspect-ratio/duration value with inconsistent casing,
+// whitespace or separators (x/X/*/by) - comparing the raw strings as-is
+// caused every dynamicprice entry to silently fail to match whenever the
+// selected option's exact string didn't line up byte-for-byte, so the
+// estimate always fell back to the static "starting from" baseline instead
+// of updating when the user changed resolution/duration/etc.
+function normalizePriceValue(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[x×*]/g, 'x')
+    .replace(/\bby\b/g, 'x');
+}
+
 // Several image models let the user request more than one image per run
 // (e.g. SeeDream V4's `maxImages`), and Wiro bills per output on those
 // models - so a per-run price (dynamicprice's base entry, a flat
@@ -213,7 +231,7 @@ function matchDynamicPriceCostUsd(dynamicprice, params) {
         multiplier *= qty;
         quantityKeys.add(normalizePriceKey(key));
         score += 1;
-      } else if (paramValue != null && String(paramValue).toLowerCase() === String(rawValue).toLowerCase()) {
+      } else if (paramValue != null && normalizePriceValue(paramValue) === normalizePriceValue(rawValue)) {
         score += 2; // Exact matches are a stronger signal than quantity scaling.
       } else {
         matched = false;
@@ -478,16 +496,30 @@ const OUTPUT_IMAGE_COUNT_MIN = 1;
 const OUTPUT_IMAGE_COUNT_MAX = 15;
 const DEFAULT_OUTPUT_IMAGE_COUNT = 1;
 
+// --- 3D model tools (text-to-3d / image-to-3d, e.g. Hunyuan3D, Tripo, Rodin) ---
+// These models expose a handful of recurring "mesh quality" knobs that
+// aren't seen on image/video tools, each with its own common Wiro naming
+// variants. Giving every 3D tool the same sane baseline here (instead of
+// leaving whatever Wiro reports, which is sometimes empty) means a user
+// gets a usable default mesh/texture quality immediately, mirroring the
+// defaults Wiro's own playground pre-fills.
+const DEFAULT_TEXTURE_RESOLUTION = 1024;
+const DEFAULT_MESH_RESOLUTION = 256; // e.g. "octree resolution" for marching-cubes mesh extraction
+const DEFAULT_3D_OUTPUT_FORMAT = 'glb'; // Widely supported by in-browser viewers (incl. <model-viewer>)
+
 function normalizeParameterItem(item) {
   const text = `${item.id || ''} ${item.label || ''}`.toLowerCase();
   const type = (item.type || '').toLowerCase();
   const isNumeric = type === 'number' || type === 'integer' || type === 'float';
   const isSeedField = /(^|[^a-z])seed([^a-z]|$)/.test(text);
+  const isTextureResolutionField = /texture/.test(text) && /resolution/.test(text);
+  const isMeshResolutionField = (/octree/.test(text) && /resolution/.test(text))
+    || (/mesh/.test(text) && /resolution/.test(text));
+  const isOutputFormatField = (/output/.test(text) && /format/.test(text)) || /\bformat\b/.test(text) && /\b3d|mesh|model|geometry\b/.test(text);
 
-  // Image "size"/"resolution" dropdowns (width x height options) aren't
-  // necessarily numeric - normalize their default here too so one is always
-  // pre-selected instead of silently falling back to whatever option
-  // happens to be first.
+  // 3D "size"/"resolution" dropdowns (texture/mesh resolution presets) -
+  // pick a sane mid-tier default instead of whatever option happens to be
+  // first, same principle as the image size/resolution handling below.
   if (!isSeedField && Array.isArray(item.options) && item.options.length > 0) {
     const isSizeField = /\bsize\b/.test(text) || /\bresolution\b/.test(text)
       || (/\bwidth\b/.test(text) && /\bheight\b/.test(text));
@@ -499,6 +531,18 @@ function normalizeParameterItem(item) {
           /(^|[^0-9])1024x1024([^0-9]|$)/i.test(`${opt.value}`) || /square|\b1:1\b/i.test(`${opt.label || ''}`)
         ));
         return { ...item, default: (preferredSquare || item.options[0]).value };
+      }
+      return item;
+    }
+    if (isOutputFormatField) {
+      // Prefer a widely-supported-for-in-browser-preview format (glb) when
+      // Wiro doesn't already report a valid default, so the generated
+      // result can be shown in the 3D viewer without extra user setup.
+      const hasValidDefault = item.default != null
+        && item.options.some(opt => String(opt.value) === String(item.default));
+      if (!hasValidDefault) {
+        const preferredGlb = item.options.find(opt => String(opt.value).toLowerCase() === DEFAULT_3D_OUTPUT_FORMAT);
+        return { ...item, default: (preferredGlb || item.options[0]).value };
       }
     }
     return item;
@@ -565,6 +609,16 @@ function normalizeParameterItem(item) {
     const currentDefault = Number(normalized.default);
     if (!Number.isFinite(currentDefault) || currentDefault <= 0) {
       normalized.default = DEFAULT_IMAGE_DIMENSION;
+    }
+  } else if (isTextureResolutionField) {
+    const currentDefault = Number(normalized.default);
+    if (!Number.isFinite(currentDefault) || currentDefault <= 0) {
+      normalized.default = DEFAULT_TEXTURE_RESOLUTION;
+    }
+  } else if (isMeshResolutionField) {
+    const currentDefault = Number(normalized.default);
+    if (!Number.isFinite(currentDefault) || currentDefault <= 0) {
+      normalized.default = DEFAULT_MESH_RESOLUTION;
     }
   } else if (isOutputImageCountField) {
     // Whole number of images only, bounded to 1-15 - no 0/negative counts
@@ -647,6 +701,7 @@ app.get('/models/schema', async (req, res) => {
       slug: requestedModel,
       title: tool.title,
       description: tool.seodescription || tool.description || '',
+      categories: (tool.categories || []).filter(c => c !== 'tool'),
       parameters,
       estimatedCost: formatEstimatedCost(tool, requestedParams)
     });
