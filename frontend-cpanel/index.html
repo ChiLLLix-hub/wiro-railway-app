@@ -14,6 +14,7 @@
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     #hero-slides { transition: transform 0.6s cubic-bezier(.65,.05,.36,1); }
+    #sample-outputs-slides { transition: transform 0.5s cubic-bezier(.65,.05,.36,1); }
     .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   </style>
 </head>
@@ -53,7 +54,7 @@
   <div id="top" class="max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10 space-y-14">
 
     <!-- ==================== HERO / SHOWCASE CAROUSEL ==================== -->
-    <section class="space-y-8">
+    <section id="hero-section" class="space-y-8">
       <div class="text-center space-y-3 max-w-2xl mx-auto">
         <h1 class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400">
           One Studio. Every AI Model.
@@ -152,11 +153,7 @@
     </div>
 
     <!-- ==================== MODEL RUN VIEW ==================== -->
-    <div id="model-view" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4 max-w-4xl mx-auto">
-      <button id="back-btn" type="button" class="text-blue-400 hover:underline text-sm flex items-center gap-1">
-        ← Back to Model Browser
-      </button>
-
+    <div id="model-view" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
       <div>
         <h2 id="model-title" class="text-xl font-bold text-slate-100"></h2>
         <p id="model-slug" class="text-slate-400 text-xs font-mono mt-1"></p>
@@ -166,7 +163,18 @@
       <!-- Sample Outputs (example media Wiro shows on the model's own page) -->
       <div id="sample-outputs-container" class="hidden space-y-2">
         <p class="text-xs uppercase tracking-wider text-slate-500">Sample outputs</p>
-        <div id="sample-outputs-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3"></div>
+        <div class="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950 group">
+          <div id="sample-outputs-slides" class="flex"></div>
+
+          <button id="sample-outputs-prev" type="button" aria-label="Previous sample" class="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-slate-950/70 hover:bg-slate-900 border border-slate-700 items-center justify-center text-slate-200 transition opacity-0 group-hover:opacity-100">
+            ‹
+          </button>
+          <button id="sample-outputs-next" type="button" aria-label="Next sample" class="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-slate-950/70 hover:bg-slate-900 border border-slate-700 items-center justify-center text-slate-200 transition opacity-0 group-hover:opacity-100">
+            ›
+          </button>
+
+          <div id="sample-outputs-dots" class="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5"></div>
+        </div>
       </div>
 
       <form id="generator-form" class="space-y-4">
@@ -404,9 +412,11 @@
   ];
 
   // View elements
+  const heroSectionEl = document.getElementById('hero-section');
+  const categoryNavSectionEl = document.getElementById('category-nav');
+  const popularToolsSectionEl = document.getElementById('popular-tools');
   const browserView = document.getElementById('browser-view');
   const modelView = document.getElementById('model-view');
-  const backBtn = document.getElementById('back-btn');
 
   // Browser elements
   const modelSearch = document.getElementById('model-search');
@@ -422,7 +432,10 @@
   const modelSlugEl = document.getElementById('model-slug');
   const modelDescriptionEl = document.getElementById('model-description');
   const sampleOutputsContainer = document.getElementById('sample-outputs-container');
-  const sampleOutputsGrid = document.getElementById('sample-outputs-grid');
+  const sampleOutputsSlidesEl = document.getElementById('sample-outputs-slides');
+  const sampleOutputsDotsEl = document.getElementById('sample-outputs-dots');
+  const sampleOutputsPrevBtn = document.getElementById('sample-outputs-prev');
+  const sampleOutputsNextBtn = document.getElementById('sample-outputs-next');
   const form = document.getElementById('generator-form');
   const promptInput = document.getElementById('prompt');
   const submitBtn = document.getElementById('submit-btn');
@@ -617,8 +630,8 @@
   // Big, icon-led "jump straight into a model category" nav, mirroring
   // Wiro's own homepage category bar. Each entry maps to one (or more) of
   // the real CATEGORY_GROUPS above so clicking it actually filters the
-  // Model Browser below to matching models - "More" clears the filter and
-  // shows the full catalog instead of a single narrow group.
+  // Model Browser below to matching models - clicking an already-active
+  // icon again toggles it off and shows the full catalog.
   const BIG_ICON_CATEGORIES = [
     {
       key: 'video',
@@ -635,32 +648,25 @@
       icon: '<path fill-rule="evenodd" clip-rule="evenodd" d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5zm2 12 4-4.5 2.8 3 3.2-4 4 5.5H6z"/>'
     },
     {
-      key: 'suno',
-      label: 'Suno',
+      key: 'audio-speech',
+      label: 'Audio & Speech',
+      groups: ['Audio & Speech'],
+      color: 'text-amber-400',
+      icon: '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V22h2v-2.06A9 9 0 0 0 21 11h-2z"/>'
+    },
+    {
+      key: 'music',
+      label: 'Music',
       groups: ['Music'],
       color: 'text-rose-400',
       icon: '<path d="M9 18V5l11-2v13" /><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>'
     },
     {
-      key: 'chat',
-      label: 'Chat',
+      key: 'llm-chat',
+      label: 'LLM & Chat',
       groups: ['LLM'],
       color: 'text-emerald-400',
       icon: '<path fill-rule="evenodd" clip-rule="evenodd" d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>'
-    },
-    {
-      key: 'education',
-      label: 'Education',
-      groups: ['Audio & Speech'],
-      color: 'text-amber-400',
-      icon: '<path d="M12 3 2 8l10 5 8-4.2V15h2V8L12 3z"/><path d="M6 11.5V16c0 1.7 2.7 3 6 3s6-1.3 6-3v-4.5l-6 3-6-3z"/>'
-    },
-    {
-      key: 'more',
-      label: 'More',
-      groups: [],
-      color: 'text-slate-300',
-      icon: '<circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>'
     }
   ];
   let activeBigCategory = null; // key of the selected BIG_ICON_CATEGORIES entry, or null = all
@@ -987,6 +993,9 @@
     resetOutputDetails();
     resetLookupResult();
 
+    heroSectionEl?.classList.add('hidden');
+    categoryNavSectionEl?.classList.add('hidden');
+    popularToolsSectionEl?.classList.add('hidden');
     browserView.classList.add('hidden');
     modelView.classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -997,46 +1006,76 @@
   // Wiro's own model page shows a "Sample outputs" gallery of example
   // generations (images and/or videos) for that model - `/models` already
   // returns this as `samples`, it just wasn't rendered anywhere. Mirror that
-  // here so users can see what a model produces before running it.
-  function renderSampleOutputs(samples) {
-    sampleOutputsGrid.innerHTML = '';
+  // here as a sliding carousel (like the homepage hero) so users can browse
+  // through what a model produces before running it.
+  let sampleOutputsData = [];
+  let sampleOutputsIndex = 0;
 
-    if (!Array.isArray(samples) || samples.length === 0) {
+  function renderSampleOutputs(samples) {
+    sampleOutputsData = Array.isArray(samples) ? samples.filter(Boolean) : [];
+    sampleOutputsIndex = 0;
+    sampleOutputsSlidesEl.innerHTML = '';
+    sampleOutputsDotsEl.innerHTML = '';
+
+    if (sampleOutputsData.length === 0) {
       sampleOutputsContainer.classList.add('hidden');
       return;
     }
 
-    samples.forEach((url, index) => {
-      const card = document.createElement('div');
-      card.className = 'rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden aspect-square';
+    sampleOutputsData.forEach((url, index) => {
+      const panel = document.createElement('div');
+      panel.className = 'relative w-full shrink-0 aspect-video bg-slate-900';
 
       if (isVideoUrl(url)) {
         const video = document.createElement('video');
         video.src = url;
-        video.className = 'w-full h-full object-cover';
+        video.className = 'absolute inset-0 w-full h-full object-cover';
         video.muted = true;
         video.controls = true;
         video.loop = true;
         video.playsInline = true;
         video.preload = 'metadata';
-        video.addEventListener('error', () => card.remove(), { once: true });
-        card.appendChild(video);
+        video.addEventListener('error', () => panel.remove(), { once: true });
+        panel.appendChild(video);
       } else {
         const img = document.createElement('img');
         img.src = url;
         img.alt = `Sample output ${index + 1}`;
         img.loading = 'lazy';
         img.referrerPolicy = 'no-referrer';
-        img.className = 'w-full h-full object-cover';
-        img.addEventListener('error', () => card.remove(), { once: true });
-        card.appendChild(img);
+        img.className = 'absolute inset-0 w-full h-full object-cover';
+        img.addEventListener('error', () => panel.remove(), { once: true });
+        panel.appendChild(img);
       }
 
-      sampleOutputsGrid.appendChild(card);
+      sampleOutputsSlidesEl.appendChild(panel);
+
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.setAttribute('aria-label', `Go to sample ${index + 1}`);
+      dot.addEventListener('click', () => goToSampleSlide(index));
+      sampleOutputsDotsEl.appendChild(dot);
     });
 
+    updateSampleOutputsTransform();
     sampleOutputsContainer.classList.remove('hidden');
   }
+
+  function updateSampleOutputsTransform() {
+    sampleOutputsSlidesEl.style.transform = `translateX(-${sampleOutputsIndex * 100}%)`;
+    [...sampleOutputsDotsEl.children].forEach((dot, i) => {
+      dot.className = `h-1.5 rounded-full transition-all ${i === sampleOutputsIndex ? 'w-5 bg-white' : 'w-1.5 bg-white/40 hover:bg-white/70'}`;
+    });
+  }
+
+  function goToSampleSlide(index) {
+    if (sampleOutputsData.length === 0) return;
+    sampleOutputsIndex = ((index % sampleOutputsData.length) + sampleOutputsData.length) % sampleOutputsData.length;
+    updateSampleOutputsTransform();
+  }
+
+  sampleOutputsPrevBtn?.addEventListener('click', () => goToSampleSlide(sampleOutputsIndex - 1));
+  sampleOutputsNextBtn?.addEventListener('click', () => goToSampleSlide(sampleOutputsIndex + 1));
 
   // ------------------------------------------------------------------
   // Model Schema: fetch each model's real parameters and render inputs
@@ -1644,6 +1683,9 @@
   function showBrowserView() {
     selectedModel = null;
     modelView.classList.add('hidden');
+    heroSectionEl?.classList.remove('hidden');
+    categoryNavSectionEl?.classList.remove('hidden');
+    popularToolsSectionEl?.classList.remove('hidden');
     browserView.classList.remove('hidden');
 
     if (window.location.hash) {
@@ -1651,13 +1693,15 @@
     }
   }
 
-  backBtn.addEventListener('click', showBrowserView);
-
   window.addEventListener('hashchange', handleRouteFromHash);
 
+  // Clicking the logo (header or footer, both link to `#top`) always takes
+  // the user back to the home view - with every section (hero, categories,
+  // Popular AI Tools, Model Browser) visible again, same as a fresh load.
   function handleRouteFromHash() {
     const match = /^#model\/(.+)$/.exec(window.location.hash);
     if (!match) {
+      showBrowserView();
       return;
     }
 
