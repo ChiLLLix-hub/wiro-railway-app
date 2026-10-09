@@ -335,6 +335,113 @@ function normalizeTaskOutputs(outputs = []) {
     }));
 }
 
+// Model curation / blocklist
+// MODEL_BLOCKLIST lets you hide/deny specific Wiro models from this webapp
+// without touching code - set it in Railway's environment variables as a
+// comma-separated list of rules, e.g.:
+//   MODEL_BLOCKLIST=xai/*, wiro/*, wiro-partners/*, category:nsfw, uncensored
+// Supported rule forms (case-insensitive, whitespace trimmed):
+//   owner/project  - blocks that exact model
+//   owner/*        - blocks every model published by that owner
+//   category:slug  - blocks every model tagged with that Wiro category
+//   anything else  - treated as a free-text keyword: blocks any model whose
+//                    slug, title, description, tags or categories contain it
+//                    (e.g. "uncensored" to hide Wiro's "uncensored" models,
+//                    which aren't a distinct owner/category to block by slug)
+const MODEL_BLOCKLIST_RULES = parseModelBlocklist(process.env.MODEL_BLOCKLIST);
+
+function parseModelBlocklist(raw) {
+  if (!raw) return [];
+  return String(raw)
+    .split(',')
+    .map(entry => entry.trim().toLowerCase())
+    .filter(Boolean)
+    .map(entry => {
+      if (entry.startsWith('category:')) {
+        return { type: 'category', value: entry.slice('category:'.length).trim() };
+      }
+      if (entry.includes('/')) {
+        const [owner, project] = entry.split('/');
+        return project === '*'
+          ? { type: 'owner', value: owner }
+          : { type: 'slug', value: `${owner}/${project}` };
+      }
+      return { type: 'keyword', value: entry };
+    })
+    .filter(rule => rule.value);
+}
+
+// Normalizes a raw Wiro tool/model object - whose field names differ
+// slightly between /Tool/List (cleanslugowner/cleanslugproject) and
+// /Tool/Detail (slugowner/slugproject) - into the handful of fields the
+// blocklist rules above need to check against.
+function getModelBlocklistFields(model) {
+  const owner = String(model.cleanslugowner || model.slugowner || '').toLowerCase();
+  const project = String(model.cleanslugproject || model.slugproject || '').toLowerCase();
+  const slug = owner && project ? `${owner}/${project}` : '';
+  const categories = (model.categories || []).map(c => String(c).toLowerCase());
+  const tags = (model.tags || []).map(t => String(t).toLowerCase());
+  const text = [model.title, model.seodescription, model.description]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return { owner, slug, categories, tags, text };
+}
+
+// True if any configured MODEL_BLOCKLIST rule matches this model - used to
+// both filter the public /models list and to reject direct schema/generate
+// requests for a model that isn't supposed to be reachable at all.
+function isModelBlocked(model) {
+  if (MODEL_BLOCKLIST_RULES.length === 0) return false;
+  const { owner, slug, categories, tags, text } = getModelBlocklistFields(model);
+
+  return MODEL_BLOCKLIST_RULES.some(rule => {
+    switch (rule.type) {
+      case 'slug':
+        return slug === rule.value;
+      case 'owner':
+        return owner === rule.value;
+      case 'category':
+        return categories.includes(rule.value);
+      case 'keyword':
+        return slug.includes(rule.value)
+          || categories.some(c => c.includes(rule.value))
+          || tags.some(t => t.includes(rule.value))
+          || text.includes(rule.value);
+      default:
+        return false;
+    }
+  });
+}
+
+// Fast-path block check for a bare "owner/project" slug (e.g. from
+// POST /generate, which only ever receives the slug string). Slug/owner
+// rules can be checked without any extra Wiro call; category/keyword rules
+// need the model's real metadata, so those only trigger a /Tool/Detail
+// lookup when such a rule is actually configured.
+async function isModelSlugBlocked(modelSlug) {
+  const [owner = '', project = ''] = String(modelSlug || '').toLowerCase().split('/');
+  const slug = owner && project ? `${owner}/${project}` : '';
+
+  const matchesSlugRule = MODEL_BLOCKLIST_RULES.some(rule => (
+    (rule.type === 'slug' && rule.value === slug)
+    || (rule.type === 'owner' && rule.value === owner)
+  ));
+  if (matchesSlugRule) return true;
+
+  const needsMetadataLookup = MODEL_BLOCKLIST_RULES.some(rule => rule.type === 'category' || rule.type === 'keyword');
+  if (!needsMetadataLookup) return false;
+
+  try {
+    const tool = await resolveModelDetail(modelSlug);
+    return tool ? isModelBlocked(tool) : false;
+  } catch {
+    // Don't block generation just because the lookup to verify the
+    // blocklist failed - fail open rather than breaking every generation.
+    return false;
+  }
+}
+
 // Dynamic models list endpoint
 // Uses the Wiro SDK's searchModels() helper, which correctly calls the
 // authenticated `/Tool/List` endpoint (POST + HMAC signature headers)
@@ -379,7 +486,13 @@ app.get('/models', async (req, res) => {
       return res.status(502).json({ error: message });
     }
 
-    const models = (result.tool || []).map(model => ({
+    const rawTools = result.tool || [];
+    // Drop anything matched by MODEL_BLOCKLIST before it ever reaches the
+    // frontend, so blocked models are neither shown nor selectable.
+    const visibleTools = rawTools.filter(model => !isModelBlocked(model));
+    const blockedCount = rawTools.length - visibleTools.length;
+
+    const models = visibleTools.map(model => ({
       slug: `${model.cleanslugowner}/${model.cleanslugproject}`,
       owner: model.cleanslugowner,
       project: model.cleanslugproject,
@@ -402,7 +515,10 @@ app.get('/models', async (req, res) => {
 
     return res.json({
       data: models,
-      total: Number(result.total) || models.length,
+      // Best-effort: Wiro's `total` counts matches across every page, but we
+      // only know which models are blocked on the page we just fetched, so
+      // this slightly overcounts when blocked models exist on other pages.
+      total: Math.max(0, (Number(result.total) || rawTools.length) - blockedCount),
       start: safeStart,
       limit: safeLimit
     });
@@ -668,7 +784,7 @@ app.get('/models/schema', async (req, res) => {
 
     const tool = await resolveModelDetail(requestedModel);
 
-    if (!tool) {
+    if (!tool || isModelBlocked(tool)) {
       return res.status(404).json({ error: `Model "${requestedModel}" was not found.` });
     }
 
@@ -753,7 +869,7 @@ app.get('/models/estimate-cost', async (req, res) => {
 
     const tool = await resolveModelDetail(requestedModel);
 
-    if (!tool) {
+    if (!tool || isModelBlocked(tool)) {
       return res.status(404).json({ error: `Model "${requestedModel}" was not found.` });
     }
 
@@ -836,6 +952,13 @@ app.post('/generate', async (req, res) => {
     const { model, prompt, ...rest } = req.body || {};
 
     const selectedModel = model || 'alibaba/wan-2-7-image';
+
+    // Enforce MODEL_BLOCKLIST here too - not just in GET /models - so a
+    // blocked model can't be run by calling this endpoint directly with its
+    // slug, bypassing the fact that the frontend never lists/offers it.
+    if (await isModelSlugBlocked(selectedModel)) {
+      return res.status(403).json({ success: false, error: `Model "${selectedModel}" is not available.` });
+    }
 
     const options = {
       prompt: prompt || 'A cinematic studio render...'
