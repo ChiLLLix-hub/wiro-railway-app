@@ -2511,11 +2511,24 @@
           </button>
         </div>
       `;
-      panel.querySelector('.hero-cta').addEventListener('click', () => {
-        const model = slide.slug ? allModels.find(m => m.slug === slide.slug) : null;
+      panel.querySelector('.hero-cta').addEventListener('click', async () => {
+        if (!slide.slug) {
+          document.getElementById('browser-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
+
+        // The hero carousel's "trending" slides (and any MANUAL_HERO_SLIDES
+        // entries) aren't necessarily part of the Model Browser's currently
+        // loaded page(s) in `allModels` (paging only fetches a slice at a
+        // time), so a local-only lookup often missed and silently fell back
+        // to scrolling instead of opening the model. Fall back to the same
+        // direct-by-slug lookup used for deep links when it's not loaded yet.
+        const model = allModels.find(m => m.slug === slide.slug) || await fetchModelBySlug(slide.slug);
+
         if (model) {
           selectModel(model);
         } else {
+          console.warn('Could not resolve hero slide model for "Start Creating":', slide.slug);
           document.getElementById('browser-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
       });
