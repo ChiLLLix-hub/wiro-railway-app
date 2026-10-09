@@ -36,6 +36,9 @@
         <a href="#category-nav" class="hover:text-white transition">Explore</a>
         <a href="#popular-tools" class="hover:text-white transition">Popular Tools</a>
         <a href="#browse" class="hover:text-white transition">All Models</a>
+        <!-- Only shown when the backend reports a configured MODEL_BLOCKLIST
+             keyword tag (e.g. "uncensored") - see renderTagNavLinks(). -->
+        <a id="tag-nav-link" href="#browse" class="hidden hover:text-white transition"></a>
       </nav>
 
       <div class="flex items-center gap-2 shrink-0">
@@ -104,6 +107,9 @@
         <h2 class="text-xl font-bold text-slate-100">Model Browser</h2>
         <p class="text-slate-400 text-sm">Browse available models interactively. Click on a model to see its details on the model page.</p>
       </div>
+
+      <!-- Shown only while a content-tag filter (e.g. Uncensored) is active -->
+      <div id="tag-content-notice" class="hidden text-sm text-amber-300 bg-amber-950/40 border border-amber-800/60 rounded-xl px-4 py-2"></div>
 
       <input
         id="model-search"
@@ -364,6 +370,7 @@
           <li><a href="#category-nav" class="hover:text-white transition">Categories</a></li>
           <li><a href="#popular-tools" class="hover:text-white transition">Popular Tools</a></li>
           <li><a href="#browse" class="hover:text-white transition">All Models</a></li>
+          <li><a id="tag-nav-link-footer" href="#browse" class="hidden hover:text-white transition"></a></li>
         </ul>
       </div>
 
@@ -693,6 +700,8 @@
   let currentSearchTerm = '';
   let currentCategories = new Set();
   let currentSort = 'relevance';
+  let currentTag = null; // Active content-tag filter (e.g. 'uncensored'), or null = normal catalog
+  let availableTags = []; // Configured MODEL_BLOCKLIST keyword tags, reported by the backend
   let knownCategories = new Set(); // Accumulated from every page loaded so far
   let searchDebounceTimer = null;
   let isLoadingModels = false;
@@ -706,7 +715,13 @@
     url.searchParams.set('start', String(start));
     url.searchParams.set('limit', String(PAGE_SIZE));
     if (currentSearchTerm) url.searchParams.set('search', currentSearchTerm);
-    if (currentCategories.size > 0) url.searchParams.set('categories', [...currentCategories].join(','));
+    if (currentTag) {
+      // Tag-filtered pages (e.g. Uncensored) are their own dedicated section
+      // of the catalog - category filters don't apply there.
+      url.searchParams.set('tag', currentTag);
+    } else if (currentCategories.size > 0) {
+      url.searchParams.set('categories', [...currentCategories].join(','));
+    }
     if (currentSort) url.searchParams.set('sort', currentSort);
     return url;
   }
@@ -736,12 +751,23 @@
       if (requestToken !== modelsRequestToken) return; // Stale response, ignore.
 
       const modelList = Array.isArray(payload) ? payload : (payload.data || []);
-      const normalized = modelList.map(normalizeModel);
+      // Carry the active tag onto each model so the Model Run page can
+      // still pass it through to /models/schema, /models/estimate-cost and
+      // /generate - those models are only reachable/runnable with it.
+      const normalized = modelList.map(normalizeModel).map(m => (currentTag ? { ...m, tag: currentTag } : m));
+
+      if (Array.isArray(payload.availableTags)) {
+        availableTags = payload.availableTags;
+        renderTagNavLinks();
+      }
 
       if (append) {
         allModels = allModels.concat(normalized);
       } else {
-        allModels = normalized.length > 0 ? normalized : (start === 0 ? FALLBACK_MODELS.map(normalizeModel) : []);
+        // Don't fall back to the generic FALLBACK_MODELS list while a tag
+        // filter is active - those models aren't tagged, so showing them
+        // would be misleading (and some may be hard-blocked entirely).
+        allModels = normalized.length > 0 ? normalized : (start === 0 && !currentTag ? FALLBACK_MODELS.map(normalizeModel) : []);
       }
 
       currentStart = start + modelList.length;
@@ -756,7 +782,7 @@
       handleRouteFromHash();
     } catch (err) {
       console.error('Could not fetch dynamic models from Railway backend:', err);
-      if (!append && start === 0) {
+      if (!append && start === 0 && !currentTag) {
         allModels = FALLBACK_MODELS.map(normalizeModel);
         currentStart = allModels.length;
         currentTotal = allModels.length;
@@ -906,10 +932,21 @@
   }
 
   // Renders a small "Filtering: X ✕" chip above the Model Browser table so
-  // it's obvious a category filter from the big-icon nav is active, with a
-  // one-click way back to the full catalog.
+  // it's obvious a category filter from the big-icon nav (or the dedicated
+  // tag nav link) is active, with a one-click way back to the full catalog.
   function renderActiveFilterChip() {
     categoryFiltersEl.innerHTML = '';
+
+    if (currentTag) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-3 py-1.5 border bg-amber-600/90 border-amber-500 text-white transition hover:bg-amber-600';
+      chip.innerHTML = `Filtering: ${escapeHtml(formatCategoryLabel(currentTag))} <span aria-hidden="true">✕</span>`;
+      chip.addEventListener('click', () => selectTagFilter(currentTag)); // toggling the same tag clears it
+      categoryFiltersEl.appendChild(chip);
+      return;
+    }
+
     if (!activeBigCategory) return;
 
     const cat = BIG_ICON_CATEGORIES.find(c => c.key === activeBigCategory);
@@ -929,6 +966,7 @@
   // back to the full catalog.
   function selectBigCategory(key) {
     activeBigCategory = activeBigCategory === key ? null : key;
+    currentTag = null; // Category and tag filters are mutually exclusive.
 
     const cat = BIG_ICON_CATEGORIES.find(c => c.key === activeBigCategory);
     activeCategoryGroups = new Set(cat ? [cat.key] : []);
@@ -941,8 +979,63 @@
 
     renderBigIconCategories();
     renderActiveFilterChip();
+    renderTagContentNotice();
     loadModels();
     document.getElementById('browser-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Mirrors selectBigCategory for a dedicated content-tag section (e.g. the
+  // "Uncensored" nav link): jumps straight into the Model Browser filtered
+  // to models tagged with that keyword, clearing any active category
+  // filter since the two are mutually exclusive. Clicking the already-active
+  // tag again toggles back to the full catalog.
+  function selectTagFilter(tag) {
+    currentTag = currentTag === tag ? null : tag;
+    activeBigCategory = null;
+    activeCategoryGroups = new Set();
+    currentCategories = new Set();
+
+    renderBigIconCategories();
+    renderActiveFilterChip();
+    renderTagContentNotice();
+    loadModels();
+    document.getElementById('browser-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Shows a brief content notice above the Model Browser table while a tag
+  // filter (e.g. Uncensored) is active, since those models may contain
+  // mature content that isn't otherwise flagged in the UI.
+  function renderTagContentNotice() {
+    const notice = document.getElementById('tag-content-notice');
+    if (!notice) return;
+    if (!currentTag) {
+      notice.classList.add('hidden');
+      notice.textContent = '';
+      return;
+    }
+    notice.textContent = `Showing models tagged "${formatCategoryLabel(currentTag)}" — mature/uncensored content, viewer discretion advised.`;
+    notice.classList.remove('hidden');
+  }
+
+  // Renders the "Uncensored"-style nav link(s) in the top bar and footer,
+  // one per keyword tag the backend reports as actually configured via
+  // MODEL_BLOCKLIST - apps that never set it to a keyword get no dead link.
+  function renderTagNavLinks() {
+    const label = availableTags.length > 0 ? formatCategoryLabel(availableTags[0]) : '';
+    [document.getElementById('tag-nav-link'), document.getElementById('tag-nav-link-footer')].forEach(link => {
+      if (!link) return;
+      if (availableTags.length === 0) {
+        link.classList.add('hidden');
+        link.onclick = null;
+        return;
+      }
+      link.textContent = label;
+      link.classList.remove('hidden');
+      link.onclick = (event) => {
+        event.preventDefault();
+        selectTagFilter(availableTags[0]);
+      };
+    });
   }
 
   // Given a model's raw category slugs, find the broad group it belongs to
@@ -1367,7 +1460,10 @@
     renderEstimatedCost(null);
 
     try {
-      const res = await fetch(`${RAILWAY_SCHEMA_URL}?model=${encodeURIComponent(model.slug)}`, { cache: 'no-store' });
+      const schemaUrl = new URL(RAILWAY_SCHEMA_URL);
+      schemaUrl.searchParams.set('model', model.slug);
+      if (model.tag) schemaUrl.searchParams.set('tag', model.tag);
+      const res = await fetch(schemaUrl, { cache: 'no-store' });
       const payload = await res.json().catch(() => ({}));
 
       if (!res.ok) {
@@ -1435,7 +1531,10 @@
     }
 
     try {
-      const url = `${RAILWAY_ESTIMATE_URL}?model=${encodeURIComponent(modelSlug)}&params=${encodeURIComponent(JSON.stringify(params))}`;
+      const url = new URL(RAILWAY_ESTIMATE_URL);
+      url.searchParams.set('model', modelSlug);
+      url.searchParams.set('params', JSON.stringify(params));
+      if (selectedModel?.slug === modelSlug && selectedModel.tag) url.searchParams.set('tag', selectedModel.tag);
       const res = await fetch(url, { cache: 'no-store' });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) return;
@@ -2072,6 +2171,7 @@
         body: JSON.stringify({
           model: selectedModel.slug,
           prompt: promptInput.value.trim(),
+          ...(selectedModel.tag ? { tag: selectedModel.tag } : {}),
           ...paramValues
         })
       });
