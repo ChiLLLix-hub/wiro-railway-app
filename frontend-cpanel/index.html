@@ -952,6 +952,17 @@
     return /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i.test(url);
   }
 
+  // Text-to-speech/voice models (e.g. Eleven V4) have *audio* sample
+  // outputs (mp3/wav/etc.) rather than images or video. Rendering those
+  // through an <img> tag always fails to load (fires `error`, no fallback),
+  // which is why their "Sample outputs" thumbnails showed broken-image
+  // placeholders instead of a playable preview. Detect that case so the
+  // gallery can render an <audio> player instead.
+  function isAudioUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return /\.(mp3|wav|ogg|oga|m4a|aac|flac|weba)(\?|#|$)/i.test(url);
+  }
+
   function normalizeModel(m) {
     const slug = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name || ''));
     const categories = Array.isArray(m.categories) && m.categories.length > 0
@@ -1189,6 +1200,17 @@
         video.preload = 'metadata';
         video.addEventListener('error', () => panel.remove(), { once: true });
         panel.appendChild(video);
+      } else if (isAudioUrl(url)) {
+        const audioWrap = document.createElement('div');
+        audioWrap.className = 'absolute inset-0 flex items-center justify-center p-4 bg-slate-900';
+        const audio = document.createElement('audio');
+        audio.src = url;
+        audio.controls = true;
+        audio.preload = 'metadata';
+        audio.className = 'w-full max-w-xs';
+        audio.addEventListener('error', () => panel.remove(), { once: true });
+        audioWrap.appendChild(audio);
+        panel.appendChild(audioWrap);
       } else {
         const img = document.createElement('img');
         img.src = url;
@@ -1235,7 +1257,16 @@
       video.muted = true;
       video.playsInline = true;
       video.preload = 'metadata';
+      video.addEventListener('error', () => {
+        video.remove();
+        thumb.appendChild(createThumbnailPlaceholder());
+      }, { once: true });
       thumb.appendChild(video);
+    } else if (isAudioUrl(url)) {
+      // Audio can't be meaningfully previewed in a 64x64 thumbnail - show a
+      // speaker icon instead; the real <audio> player is in the main frame
+      // above (clicking the thumb still jumps the main frame to it).
+      thumb.innerHTML = '<div class="absolute inset-0 flex items-center justify-center bg-slate-800 text-blue-300 text-xl">🔊</div>';
     } else {
       const img = document.createElement('img');
       img.src = url;
@@ -1243,6 +1274,10 @@
       img.loading = 'lazy';
       img.referrerPolicy = 'no-referrer';
       img.className = 'absolute inset-0 w-full h-full object-cover';
+      img.addEventListener('error', () => {
+        img.remove();
+        thumb.appendChild(createThumbnailPlaceholder());
+      }, { once: true });
       thumb.appendChild(img);
     }
 
