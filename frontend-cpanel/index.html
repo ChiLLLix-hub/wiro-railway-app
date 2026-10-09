@@ -136,7 +136,6 @@
               <th class="px-4 py-2 font-medium">Provider</th>
               <th class="px-4 py-2 font-medium">Category</th>
               <th class="px-4 py-2 font-medium">Tags</th>
-              <th class="px-4 py-2 font-medium">Pricing</th>
               <th class="px-4 py-2 font-medium"></th>
             </tr>
           </thead>
@@ -920,18 +919,6 @@
       .join(' ');
   }
 
-  // Rough per-model pricing unit, inferred from modality since Wiro's
-  // /Tool/List doesn't expose a stable "billing unit" field directly.
-  function inferPricingUnit(primaryCategory) {
-    if (!primaryCategory) return 'Per run';
-    if (['text-to-video', 'image-to-video', 'video-to-video', 'speech-to-video'].includes(primaryCategory)) return 'Per second';
-    if (['text-to-image', 'image-to-image', 'image-editing', 'inpainting'].includes(primaryCategory)) return 'Per image';
-    if (['text-to-speech', 'speech-to-speech', 'speech-to-text', 'voice-agent'].includes(primaryCategory)) return 'Per minute';
-    if (['text-to-music', 'image-to-music', 'text-to-song', 'image-to-song'].includes(primaryCategory)) return 'Per run';
-    if (['llm', 'llm-reasoning', 'llm-tool-call', 'llm-response-format'].includes(primaryCategory)) return 'Per request';
-    return 'Per run';
-  }
-
   modelSortSelect.addEventListener('change', () => {
     currentSort = modelSortSelect.value || 'relevance';
     loadModels();
@@ -1009,7 +996,7 @@
 
     if (!models.length) {
       const empty = document.createElement('tr');
-      empty.innerHTML = `<td colspan="6" class="text-slate-400 text-sm text-center py-6">No models match your search.</td>`;
+      empty.innerHTML = `<td colspan="5" class="text-slate-400 text-sm text-center py-6">No models match your search.</td>`;
       modelsGrid.appendChild(empty);
       return;
     }
@@ -1017,7 +1004,6 @@
     models.forEach(model => {
       const { primary, tags: extraTags } = classifyCategories(model.categories);
       const categoryLabel = formatCategoryLabel(primary || model.categories[0]);
-      const pricingLabel = model.approximatelycost ? `~$${model.approximatelycost}` : inferPricingUnit(primary);
 
       const row = document.createElement('tr');
       row.className = 'hover:bg-slate-800/50 transition cursor-pointer';
@@ -1087,10 +1073,6 @@
         .map(tag => `<span class="inline-block text-xs rounded px-2 py-1 border border-slate-700 bg-slate-800 text-slate-300 mr-1 mb-1 whitespace-nowrap">${escapeHtml(tag)}</span>`)
         .join('');
 
-      const pricingCell = document.createElement('td');
-      pricingCell.className = 'px-4 py-3 text-slate-400 text-sm whitespace-nowrap';
-      pricingCell.textContent = pricingLabel;
-
       const actionCell = document.createElement('td');
       actionCell.className = 'px-4 py-3 text-right';
       actionCell.innerHTML = `<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400">View model →</span>`;
@@ -1099,7 +1081,6 @@
       row.appendChild(providerCell);
       row.appendChild(categoryCell);
       row.appendChild(tagsCell);
-      row.appendChild(pricingCell);
       row.appendChild(actionCell);
 
       row.addEventListener('click', () => selectModel(model));
