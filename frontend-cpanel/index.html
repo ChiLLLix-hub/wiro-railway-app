@@ -1,0 +1,2766 @@
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mygenx Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google's <model-viewer> web component - renders glTF/GLB/USDZ 3D
+       model outputs in-browser with built-in orbit (drag) and zoom
+       (scroll/pinch) controls, similar to own 3D result preview. -->
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <!--<link rel="icon" href="https://files.svgcdn.io/flat-ui/rocket.svg" type="image/x-icon"> -->
+  <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
+  <style>
+    html { scroll-behavior: smooth; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    #hero-slides { transition: transform 0.6s cubic-bezier(.65,.05,.36,1); }
+    #sample-outputs-slides { transition: transform 0.5s cubic-bezier(.65,.05,.36,1); }
+    .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+  <!-- ==================== TOP BAR / HEADER ==================== -->
+  <header class="sticky top-0 z-40 bg-slate-950/80 backdrop-blur border-b border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 md:px-8 py-3 flex items-center justify-between gap-4">
+      <a href="#top" class="flex items-center gap-2 shrink-0">
+        <span class="px-3 py-1 rounded-lg bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white text-sm">MYGENX</span>
+        <span class="font-extrabold text-lg text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 hidden sm:inline">Studio</span>
+      </a>
+
+      <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300">
+        <a href="#category-nav" class="hover:text-white transition">Explore</a>
+        <a href="#popular-tools" class="hover:text-white transition">Popular Tools</a>
+        <a href="#browse" class="hover:text-white transition">All Models</a>
+      </nav>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <button id="login-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg transition">Log in</button>
+        <button id="register-btn" type="button" class="text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition">Sign up</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ==================== AUTH MODAL (placeholder) ==================== -->
+  <div id="auth-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 relative">
+      <button id="auth-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
+      <h3 id="auth-modal-title" class="text-lg font-bold text-slate-100">Log in</h3>
+      <p class="text-slate-400 text-sm">Account sign-in is coming soon. In the meantime, you can explore and generate with every model below — no account required.</p>
+      <button type="button" class="auth-modal-ok w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-2.5 rounded-xl transition">Got it</button>
+    </div>
+  </div>
+
+  <div id="top" class="max-w-7xl mx-auto px-4 md:px-8 py-6 md:py-10 space-y-14">
+
+    <!-- ==================== HERO / SHOWCASE CAROUSEL ==================== -->
+    <section id="hero-section" class="space-y-8">
+      <div class="text-center space-y-3 max-w-2xl mx-auto">
+        <h1 class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400">
+          One Studio. 500+ AI Model.
+        </h1>
+        <p class="text-slate-400 text-sm md:text-base">Generate stunning images, videos, music and more — powered by the world's best AI models in a single interface.</p>
+      </div>
+
+      <div class="relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl group">
+        <div id="hero-slides" class="flex"></div>
+
+        <button id="hero-prev" type="button" aria-label="Previous slide" class="hidden md:flex absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-slate-950/70 hover:bg-slate-900 border border-slate-700 items-center justify-center text-slate-200 transition opacity-0 group-hover:opacity-100">
+          ‹
+        </button>
+        <button id="hero-next" type="button" aria-label="Next slide" class="hidden md:flex absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-slate-950/70 hover:bg-slate-900 border border-slate-700 items-center justify-center text-slate-200 transition opacity-0 group-hover:opacity-100">
+          ›
+        </button>
+
+        <div id="hero-dots" class="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2"></div>
+      </div>
+    </section>
+
+    <!-- ==================== BIG-ICON CATEGORY NAV ==================== -->
+    <section id="category-nav" class="space-y-4">
+      <h2 class="text-lg font-bold text-slate-100">Browse by Category</h2>
+      <div id="category-icons" class="flex flex-wrap items-center justify-center gap-3 md:gap-4"></div>
+    </section>
+
+    <!-- ==================== POPULAR AI TOOLS ==================== -->
+    <section id="popular-tools" class="space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="flex items-center gap-2 text-lg font-bold text-slate-100">
+          <svg class="w-5 h-5 text-purple-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z"/></svg>
+          Popular AI Tools
+        </h2>
+        <a href="#browse" id="popular-tools-view-all" class="text-sm font-medium text-blue-400 hover:text-blue-300 flex items-center gap-1 transition">View All <span aria-hidden="true">→</span></a>
+      </div>
+      <div id="popular-tools-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4"></div>
+    </section>
+
+    <!-- ==================== MODEL BROWSER VIEW ==================== -->
+    <div id="browser-view" class="scroll-mt-24 bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
+      <div id="browse">
+        <h2 class="text-xl font-bold text-slate-100">Model Browser</h2>
+        <p class="text-slate-400 text-sm">Browse available models interactively. Click on a model to see its details on the model page.</p>
+      </div>
+
+      <input
+        id="model-search"
+        type="text"
+        placeholder="Search models..."
+        class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+      >
+
+      <div class="flex flex-wrap items-center gap-2">
+        <div id="category-filters" class="flex flex-wrap items-center gap-2"></div>
+        <select
+          id="model-sort"
+          class="ml-auto bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+        >
+          <option value="relevance">Sort: Relevance</option>
+          <option value="time">Sort: Newest</option>
+          <option value="ratedusercount">Sort: Most Rated</option>
+          <option value="commentcount">Sort: Most Comments</option>
+          <option value="averagepoint">Sort: Highest Rated</option>
+        </select>
+      </div>
+
+      <div id="models-status" class="text-slate-400 text-sm py-2">Loading models…</div>
+
+      <div class="overflow-x-auto border border-slate-800 rounded-xl">
+        <table class="min-w-full text-sm">
+          <thead>
+            <tr class="text-left text-xs uppercase tracking-wide text-slate-500 border-b border-slate-800">
+              <th class="px-4 py-2 font-medium">Model</th>
+              <th class="px-4 py-2 font-medium">Provider</th>
+              <th class="px-4 py-2 font-medium">Category</th>
+              <th class="px-4 py-2 font-medium">Tags</th>
+              <th class="px-4 py-2 font-medium"></th>
+            </tr>
+          </thead>
+          <tbody id="models-grid" class="divide-y divide-slate-800"></tbody>
+        </table>
+      </div>
+
+      <div class="flex flex-col items-center gap-2 pt-2">
+        <p id="models-count" class="text-slate-500 text-xs hidden"></p>
+        <button
+          id="load-more-btn"
+          type="button"
+          class="hidden bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium py-2 px-4 rounded-xl transition disabled:opacity-50"
+        >
+          Load more models ↓
+        </button>
+      </div>
+    </div>
+
+    <!-- ==================== MODEL RUN VIEW ==================== -->
+    <div id="model-view" class="hidden space-y-6">
+      <div class="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8">
+        <h2 id="model-title" class="text-xl font-bold text-slate-100"></h2>
+        <p id="model-slug" class="text-slate-400 text-xs font-mono mt-1"></p>
+        <p id="model-description" class="text-slate-400 text-sm mt-2"></p>
+      </div>
+
+      <!-- Sample Outputs (example media shows on the model's own page) -->
+      <!-- Kept in its own top-level card, separate from the prompt/generate
+           card below, so the example gallery reads as "what this model can
+           produce" rather than being visually merged into the input form. -->
+      <div id="sample-outputs-container" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-2">
+        <p class="text-xs uppercase tracking-wider text-slate-500">Sample outputs</p>
+        <div class="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950 group">
+          <div id="sample-outputs-slides" class="flex"></div>
+
+          <button id="sample-outputs-prev" type="button" aria-label="Previous sample" class="hidden md:flex absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-slate-950/70 hover:bg-slate-900 border border-slate-700 items-center justify-center text-slate-200 transition opacity-0 group-hover:opacity-100">
+            ‹
+          </button>
+          <button id="sample-outputs-next" type="button" aria-label="Next sample" class="hidden md:flex absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-slate-950/70 hover:bg-slate-900 border border-slate-700 items-center justify-center text-slate-200 transition opacity-0 group-hover:opacity-100">
+            ›
+          </button>
+
+          <div id="sample-outputs-dots" class="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5"></div>
+        </div>
+
+        <div id="sample-outputs-thumbs" class="flex items-center gap-2 overflow-x-auto py-1"></div>
+      </div>
+
+      <!-- "Generate from model" - the prompt + parameters + cost estimate +
+           submit button, in its own dedicated card, separate from both the
+           sample outputs above and the generated result below. -->
+      <div class="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
+      <h3 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generate from Model</h3>
+      <form id="generator-form" class="space-y-4">
+
+        <!-- Prompt Input -->
+
+        <div>
+          <label for="prompt" class="block text-sm font-medium text-slate-300 mb-1">Text Prompt</label>
+          <textarea
+            id="prompt"
+            rows="3"
+            required
+            placeholder="Describe what you want to generate..."
+            class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+          ></textarea>
+        </div>
+
+        <!-- Dynamic Model Parameters (rendered from the model's schema) -->
+        <div id="params-status" class="hidden text-slate-400 text-xs"></div>
+        <div id="three-d-hint" class="hidden text-xs text-teal-300 bg-teal-500/10 border border-teal-500/30 rounded-xl p-3">
+          This is a 3D model tool - mesh/texture quality parameters below have sane defaults pre-filled, and the cost estimate updates automatically as you change them. The generated 3D model can be viewed and rotated/zoomed right here once ready.
+        </div>
+        <div id="dynamic-params" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+
+        <!-- Pre-generation cost estimate (own pricing signals, with
+             CURRENCY_EXCHANGE conversion applied server-side) -->
+        <div id="estimated-cost-container" class="hidden bg-slate-900/70 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-sm">
+          <span class="text-slate-400">Estimated Cost</span>
+          <span id="estimated-cost" class="font-semibold text-slate-200">—</span>
+        </div>
+
+        <button
+          type="submit"
+          id="submit-btn"
+          class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition flex items-center justify-center space-x-2 disabled:opacity-50"
+        >
+          <span id="btn-text">Generate Asset</span>
+          <svg id="spinner" class="animate-spin h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        </button>
+      </form>
+
+      <!-- Error Alert -->
+      <div id="error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4 space-y-2">
+        <p id="error-message" class="font-medium"></p>
+        <pre id="error-debug" class="hidden whitespace-pre-wrap break-words text-red-300/80 text-xs bg-red-950/40 border border-red-500/30 rounded-lg p-3"></pre>
+      </div>
+      </div>
+
+      <!-- Generated Result - its own card, fully separate from the
+           prompt/parameters card above, so the result doesn't read as part
+           of the input form. -->
+      <div id="result-card" class="hidden bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
+      <!-- Output Preview Area -->
+      <div id="task-summary-container" class="hidden space-y-4">
+        <p id="generation-status" class="hidden text-xs text-blue-400"></p>
+        <div class="grid gap-3 md:grid-cols-2 text-sm">
+          <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
+            <p class="text-xs uppercase tracking-wider text-slate-500">Job / Task ID</p>
+            <div class="mt-2 flex items-center gap-2">
+              <p id="task-id" class="font-mono text-slate-200 break-all flex-1">—</p>
+              <button
+                type="button"
+                id="copy-task-id-btn"
+                class="hidden shrink-0 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg px-3 py-1.5 transition"
+              >Copy</button>
+            </div>
+            <p class="mt-2 text-xs text-amber-400/90">Save this job ID — you'll need it to retrieve this generation later.</p>
+          </div>
+          <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
+            <p class="text-xs uppercase tracking-wider text-slate-500">Generation Cost</p>
+            <p id="task-cost" class="mt-2 text-slate-200">—</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="output-container" class="hidden space-y-4">
+        <div class="flex justify-between items-center">
+          <h2 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Result</h2>
+        </div>
+
+        <!-- Dynamic Media Container -->
+        <div id="media-wrapper" class="relative bg-slate-950 rounded-xl overflow-hidden border border-slate-800 aspect-square flex items-center justify-center">
+          <!-- JS will dynamically insert <img>, <video> or <model-viewer> here -->
+        </div>
+
+        <div class="flex items-center justify-between text-sm pt-1">
+          <a id="download-link" href="" target="_blank" class="text-blue-400 hover:underline">
+            Open Full File ↗
+          </a>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Files</h3>
+          <div id="downloads-list" class="space-y-2 text-sm text-slate-300"></div>
+        </div>
+      </div>
+      </div>
+
+      <!-- ============ RETRIEVE A PREVIOUS GENERATION BY JOB/TASK ID ============ -->
+      <div class="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8">
+        <h3 class="text-sm font-semibold text-slate-200">Retrieve a Previous Generation</h3>
+        <p class="text-slate-400 text-xs mt-1">Already have a job/task ID from an earlier generation? Look it up here to view its result, or the failure reason if it didn't succeed.</p>
+
+        <form id="lookup-form" class="flex flex-col sm:flex-row gap-2 mt-3">
+          <input
+            id="lookup-task-id"
+            type="text"
+            required
+            placeholder="Paste job/task ID…"
+            class="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition font-mono"
+          />
+          <button
+            type="submit"
+            id="lookup-btn"
+            class="bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-sm py-2.5 px-5 rounded-xl transition disabled:opacity-50"
+          >Check Status</button>
+        </form>
+
+        <div id="lookup-status" class="hidden text-slate-400 text-xs mt-2"></div>
+
+        <div id="lookup-error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4 space-y-2 mt-3">
+          <p id="lookup-error-message" class="font-medium"></p>
+          <pre id="lookup-error-debug" class="hidden whitespace-pre-wrap break-words text-red-300/80 text-xs bg-red-950/40 border border-red-500/30 rounded-lg p-3"></pre>
+        </div>
+
+        <div id="lookup-result-container" class="hidden space-y-4 pt-3">
+          <div class="grid gap-3 md:grid-cols-2 text-sm">
+            <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500">Job / Task ID</p>
+              <p id="lookup-task-id-display" class="mt-2 font-mono text-slate-200 break-all">—</p>
+            </div>
+            <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
+              <p class="text-xs uppercase tracking-wider text-slate-500">Generation Cost</p>
+              <p id="lookup-task-cost" class="mt-2 text-slate-200">—</p>
+            </div>
+          </div>
+
+          <div id="lookup-media-wrapper" class="relative bg-slate-950 rounded-xl overflow-hidden border border-slate-800 aspect-square flex items-center justify-center"></div>
+
+          <div class="flex items-center justify-between text-sm pt-1">
+            <a id="lookup-download-link" href="" target="_blank" class="hidden text-blue-400 hover:underline">
+              Open Full File ↗
+            </a>
+          </div>
+
+          <div class="space-y-2">
+            <h3 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Files</h3>
+            <div id="lookup-downloads-list" class="space-y-2 text-sm text-slate-300"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+  </div>
+
+  <!-- ==================== FOOTER ==================== -->
+  <footer class="mt-16 border-t border-slate-800 bg-slate-950/60">
+    <div class="max-w-7xl mx-auto px-4 md:px-8 py-10 grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-8">
+      <div class="col-span-2 md:col-span-1 space-y-3">
+        <a href="#top" class="flex items-center gap-2">
+          <span class="px-3 py-1 rounded-lg bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white text-sm">MYGENX</span>
+          <span class="font-extrabold text-base text-slate-100">Multi-Model Studio</span>
+        </a>
+        <p class="text-slate-500 text-sm">One interface for every AI image, video, music, 3D and chat model — powered by Mygenx AI.</p>
+      </div>
+
+      <div class="space-y-3">
+        <h4 class="text-sm font-semibold text-slate-200">Explore</h4>
+        <ul class="space-y-2 text-sm text-slate-400">
+          <li><a href="#category-nav" class="hover:text-white transition">Categories</a></li>
+          <li><a href="#popular-tools" class="hover:text-white transition">Popular Tools</a></li>
+          <li><a href="#browse" class="hover:text-white transition">All Models</a></li>
+        </ul>
+      </div>
+
+      <div class="space-y-3">
+        <h4 class="text-sm font-semibold text-slate-200">Account</h4>
+        <ul class="space-y-2 text-sm text-slate-400">
+          <li><button type="button" class="footer-login hover:text-white transition">Log in</button></li>
+          <li><button type="button" class="footer-register hover:text-white transition">Sign up</button></li>
+        </ul>
+      </div>
+
+      <div class="space-y-3">
+        <h4 class="text-sm font-semibold text-slate-200">Powered by</h4>
+        <ul class="space-y-2 text-sm text-slate-400">
+          <li><a href="/wiro" target="_blank" rel="noopener noreferrer" class="hover:text-white transition">Mygenx AI ↗</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="border-t border-slate-800">
+      <div class="max-w-7xl mx-auto px-4 md:px-8 py-4 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
+        <p>© <span id="footer-year"></span> Mygenx Studio. All rights reserved.</p>
+        <p>Generations are billed per own task pricing.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+  const DEFAULT_BACKEND_BASE_URL = 'https://wiro-railway-app-production.up.railway.app';
+  const CUSTOM_BACKEND_BASE_URL = String(window.WIRO_API_BASE_URL || window.__WIRO_API_BASE_URL || '').replace(/\/+$/, '');
+  const CUSTOM_CREDENTIALS_MODE = String(window.WIRO_API_CREDENTIALS_MODE || '').toLowerCase();
+  const ALLOWED_CREDENTIAL_MODES = ['omit', 'same-origin', 'include'];
+  const BACKEND_BASE_URL = CUSTOM_BACKEND_BASE_URL || DEFAULT_BACKEND_BASE_URL;
+  const RAILWAY_BACKEND_URL = `${BACKEND_BASE_URL}/generate`;
+  const RAILWAY_MODELS_URL = `${BACKEND_BASE_URL}/models`;
+  const RAILWAY_SCHEMA_URL = `${BACKEND_BASE_URL}/models/schema`;
+  const RAILWAY_ESTIMATE_URL = `${BACKEND_BASE_URL}/models/estimate-cost`;
+  const RAILWAY_UPLOAD_URL = `${BACKEND_BASE_URL}/upload`;
+  const RAILWAY_TASK_URL = `${BACKEND_BASE_URL}/task`;
+
+  const FILE_PARAM_TYPES = ['fileinput', 'multifileinput', 'combinefileinput'];
+
+  function isBackendSameOrigin() {
+    try {
+      return new URL(BACKEND_BASE_URL || '', window.location.origin).origin === window.location.origin;
+    } catch {
+      return false;
+    }
+  }
+
+  function getBackendFetchCredentials() {
+    const requestedMode = ALLOWED_CREDENTIAL_MODES.includes(CUSTOM_CREDENTIALS_MODE)
+      ? CUSTOM_CREDENTIALS_MODE
+      : 'same-origin';
+    return requestedMode;
+  }
+
+  function getBackendFetchMode() {
+    return isBackendSameOrigin() ? 'same-origin' : 'cors';
+  }
+
+  const FALLBACK_MODELS = [
+    { slug: 'alibaba/wan-2-7-image', title: 'Wan 2.7 Image (Alibaba)', categories: ['text-to-image'] },
+    { slug: 'bytedance/seedream-v5-pro-uncensored', title: 'SeeDream V5 Pro (ByteDance)', categories: ['text-to-image'] },
+    { slug: 'bytedance/seedream-v4', title: 'SeeDream V4 (ByteDance)', categories: ['text-to-image'] },
+    { slug: 'alibaba/wan-2-1-video', title: 'Wan 2.1 Video (Alibaba)', categories: ['text-to-video'] },
+    { slug: 'bytedance/animatediff', title: 'AnimateDiff (ByteDance)', categories: ['text-to-video'] }
+  ];
+
+  // ------------------------------------------------------------------
+  // Hero carousel: manual override
+  // ------------------------------------------------------------------
+  // By default the hero carousel auto-populates from the top-rated models
+  // (see loadFeaturedModels() below). To curate it manually instead, list
+  // entries here - when non-empty, this list completely replaces the
+  // automatic "popular" selection for the hero carousel only (the Popular
+  // AI Tools grid underneath keeps using live "popular" data either way).
+  //
+  // Each entry can be either:
+  //   - a plain "owner/project" slug string (exactly as used in the Model
+  //     Browser / model URLs) - its title/image/description are looked up
+  //     automatically from the live model data, e.g.:
+  //       'google/nano-banana-2'
+  //   - an object to fully (or partially) hardcode a slide, optionally
+  //     still backed by a slug for the "Start Creating" button and for
+  //     filling in any fields you don't override, e.g.:
+  //       {
+  //         slug: 'google/nano-banana-2',
+  //         title: 'Nano Banana 2',
+  //         subtitle: 'Fast multi-reference image editing.',
+  //         image: 'https://example.com/custom-hero-image.jpg'
+  //       }
+    const MANUAL_HERO_SLIDES = [
+        {
+        slug: 'alibaba/wan-3-0-prime',
+        title: 'Wan 3.0 Prime Video Generator',
+        subtitle: 'Wan 3.0 Prime generates 5–30 second MP4 videos from a written prompt.',
+        image: 'https://cdn.wiro.ai/uploads/models/alibaba-wan-3-0-prime-sample-3.mp4'
+        },
+        {
+        slug: 'google/nano-banana-2',
+        title: 'Nano-Banana-2 Image Editing Tool',
+        subtitle: 'Nano-Banana-2 by Google enables fast image editing with multi-reference support. Ideal for creators needing precise image transformations. Try now..',
+        image: 'https://cdn.wiro.ai/uploads/models/google-nano-banana-2-sample-9.webp'
+        },
+        {
+        slug: 'wiro/storm-dance',
+        title: 'Social Viral - Storm Dance',
+        subtitle: 'Storm Dance is an image-to-video effect that turns one portrait into a crowd dance clip in Black, Emerald, or Pink styles.',
+        image: 'https://cdn.wiro.ai/uploads/models/wiro-storm-dance-sample-1.mp4'
+        },
+        {
+        slug: 'alibaba/qwen-image-3-0-pro',
+        title: 'Qwen Image 3.0 Pro',
+        subtitle: 'Alibaba’s Qwen Image 3.0 Pro generates and edits PNG images from long prompts and up to 3 reference images.',
+        image: 'https://cdn.wiro.ai/uploads/models/alibaba-qwen-image-3-0-pro-sample-3.webp'
+        },
+        {
+        slug: 'bytedance/seedream-v5-pro',
+        title: 'Seedream V5 Pro',
+        subtitle: 'ByteDance Seedream V5 Pro generates images from text and edits a base image using up to 10 references.',
+        image: 'https://cdn.wiro.ai/uploads/models/bytedance-seedream-v5-pro-sample-2.webp'
+        },
+        {
+        slug: 'bytedance/seedance-2-5',
+        title: 'Seedance 2.5',
+        subtitle: 'Create 4–30 second videos from a prompt and optional first and last frame images, with optional synced audio. Powered by ByteDance Seedance.',
+        image: 'https://cdn.wiro.ai/uploads/models/bytedance-seedance-2-5-sample-3.mp4'
+        },
+        {
+        slug: 'klingai/kling-v3-turbo',
+        title: 'Kling V3 Turbo',
+        subtitle: 'Kling V3 Turbo turns a prompt, or a still image plus motion instructions, into a short MP4 video with native audio and lip-sync in 720p or 1080p.',
+        image: 'https://cdn.wiro.ai/uploads/models/klingai-kling-v3-turbo-sample-2.mp4'
+        },
+        {
+        slug: 'xai/grok-imagine-video',
+        title: 'Grok Imagine Video',
+        subtitle: 'Grok Imagine Video by xAI generates short MP4 videos.',
+        image: 'https://cdn.wiro.ai/uploads/models/xai-grok-imagine-video-sample-4.mp4'
+        },
+        {
+        slug: 'google/gemini-omni-flash',
+        title: 'Google Gemini Omni Flash',
+        subtitle: 'Generate 5s,10s 720p MP4 videos from text, or animate a still image as the opening frame.',
+        image: 'https://cdn.wiro.ai/uploads/models/google-gemini-omni-flash-cover.mp4'
+        }
+    ];
+
+  // Resolves MANUAL_HERO_SLIDES (slugs and/or hardcoded slide objects) into
+  // the same {title, subtitle, image, slug} shape renderHeroSlides() expects,
+  // looking up any slug-only fields it needs from the live model data.
+  async function resolveManualHeroSlides() {
+    const resolved = await Promise.all(MANUAL_HERO_SLIDES.map(async (entry) => {
+      const isOverride = entry && typeof entry === 'object';
+      const slug = isOverride ? entry.slug : entry;
+      const base = slug ? await fetchModelBySlug(slug) : null;
+
+      if (!base && !isOverride) return null; // plain slug that couldn't be resolved - skip it
+
+      const { primary } = base ? classifyCategories(base.categories) : { primary: null };
+      const title = (isOverride && entry.title) || (base && base.title) || slug;
+      const image = (isOverride && entry.image) || (base && base.image);
+      if (!title || !image) return null; // nothing usable to show as a slide
+
+      return {
+        title,
+        subtitle: (isOverride && entry.subtitle) || (base && base.description) ||
+          (base ? `Try ${formatCategoryLabel(primary || base.categories[0])} with ${base.title}.` : ''),
+        image,
+        slug: (isOverride && entry.slug) || (base && base.slug) || ''
+      };
+    }));
+    return resolved.filter(Boolean);
+  }
+
+  // ------------------------------------------------------------------
+  // Popular AI Tools: manual override
+  // ------------------------------------------------------------------
+  // By default the "Popular AI Tools" grid auto-populates from the
+  // top-rated models (see loadFeaturedModels() below). To curate it
+  // manually instead, list entries here - when non-empty, this list
+  // completely replaces the automatic "popular" selection for the grid
+  // only (the hero carousel keeps its own independent manual/automatic
+  // selection via MANUAL_HERO_SLIDES above).
+  //
+  // Each entry can be either:
+  //   - a plain "owner/project" slug string (exactly as used in the Model
+  //     Browser / model URLs) - its title/image/description/categories are
+  //     looked up automatically from the live model data, e.g.:
+  //       'google/nano-banana-2'
+  //   - an object to fully (or partially) hardcode a card, optionally
+  //     still backed by a slug (so clicking the card opens the real model
+  //     page) and for filling in any fields you don't override, e.g.:
+  //       {
+  //         slug: 'google/nano-banana-2',
+  //         title: 'Nano Banana 2',
+  //         description: 'Fast multi-reference image editing.',
+  //         image: 'https://example.com/custom-card-image.jpg'
+  //       }
+    const MANUAL_POPULAR_TOOLS = [
+        'google/nano-banana-2',
+        'bytedance/seedream-v4',
+        'alibaba/wan-3-0-prime',
+        'alibaba/wan-3-0-r2v',
+        'alibaba/wan-2-1-video',
+        'wiro/freeze-effect',
+        'wiro/push-yourself-effects',
+        'wiro/airplane-wing-stunt-trend',
+        'openai/gpt-image-2-5-flare-custom',
+        'minimax/image-to-video-hailuo-02',
+        'wiro/product-ads'
+    ];
+
+  // Resolves MANUAL_POPULAR_TOOLS (slugs and/or hardcoded card objects) into
+  // full model-like objects renderPopularTools()/selectModel() expect,
+  // looking up any slug-only fields it needs from the live model data.
+  async function resolveManualPopularTools() {
+    const resolved = await Promise.all(MANUAL_POPULAR_TOOLS.map(async (entry) => {
+      const isOverride = entry && typeof entry === 'object';
+      const slug = isOverride ? entry.slug : entry;
+      const base = slug ? await fetchModelBySlug(slug) : null;
+
+      if (!base && !isOverride) return null; // plain slug that couldn't be resolved - skip it
+
+      const title = (isOverride && entry.title) || (base && base.title) || slug;
+      const image = (isOverride && entry.image) || (base && base.image);
+      if (!title || !image) return null; // nothing usable to show as a card
+
+      return {
+        ...(base || {}),
+        slug: (isOverride && entry.slug) || (base && base.slug) || '',
+        title,
+        description: (isOverride && entry.description) || (base && base.description) || '',
+        image,
+        imageIsVideo: (isOverride && entry.image) ? isVideoUrl(entry.image) : (base ? base.imageIsVideo : false),
+        categories: (base && base.categories) || ['Model']
+      };
+    }));
+    return resolved.filter(Boolean);
+  }
+
+  // View elements
+  const heroSectionEl = document.getElementById('hero-section');
+  const categoryNavSectionEl = document.getElementById('category-nav');
+  const popularToolsSectionEl = document.getElementById('popular-tools');
+  const browserView = document.getElementById('browser-view');
+  const modelView = document.getElementById('model-view');
+
+  // Browser elements
+  const modelSearch = document.getElementById('model-search');
+  const modelsStatus = document.getElementById('models-status');
+  const modelsGrid = document.getElementById('models-grid');
+  const categoryFiltersEl = document.getElementById('category-filters');
+  const modelSortSelect = document.getElementById('model-sort');
+  const loadMoreBtn = document.getElementById('load-more-btn');
+  const modelsCountEl = document.getElementById('models-count');
+
+  // Model run elements
+  const modelTitleEl = document.getElementById('model-title');
+  const modelSlugEl = document.getElementById('model-slug');
+  const modelDescriptionEl = document.getElementById('model-description');
+  const sampleOutputsContainer = document.getElementById('sample-outputs-container');
+  const sampleOutputsSlidesEl = document.getElementById('sample-outputs-slides');
+  const sampleOutputsDotsEl = document.getElementById('sample-outputs-dots');
+  const sampleOutputsThumbsEl = document.getElementById('sample-outputs-thumbs');
+  const sampleOutputsPrevBtn = document.getElementById('sample-outputs-prev');
+  const sampleOutputsNextBtn = document.getElementById('sample-outputs-next');
+  const form = document.getElementById('generator-form');
+  const promptInput = document.getElementById('prompt');
+  const submitBtn = document.getElementById('submit-btn');
+  const btnText = document.getElementById('btn-text');
+  const spinner = document.getElementById('spinner');
+  const errorBox = document.getElementById('error-box');
+  const errorMessage = document.getElementById('error-message');
+  const errorDebug = document.getElementById('error-debug');
+  const resultCard = document.getElementById('result-card');
+  const taskSummaryContainer = document.getElementById('task-summary-container');
+  const outputContainer = document.getElementById('output-container');
+  const mediaWrapper = document.getElementById('media-wrapper');
+  const downloadLink = document.getElementById('download-link');
+  const taskIdEl = document.getElementById('task-id');
+  const copyTaskIdBtn = document.getElementById('copy-task-id-btn');
+  const taskCostEl = document.getElementById('task-cost');
+  const generationStatusEl = document.getElementById('generation-status');
+  const downloadsList = document.getElementById('downloads-list');
+  const dynamicParams = document.getElementById('dynamic-params');
+  const paramsStatus = document.getElementById('params-status');
+  const threeDHint = document.getElementById('three-d-hint');
+  const estimatedCostContainer = document.getElementById('estimated-cost-container');
+  const estimatedCostEl = document.getElementById('estimated-cost');
+
+  // Retrieve-by-task-ID elements
+  const lookupForm = document.getElementById('lookup-form');
+  const lookupTaskIdInput = document.getElementById('lookup-task-id');
+  const lookupBtn = document.getElementById('lookup-btn');
+  const lookupStatus = document.getElementById('lookup-status');
+  const lookupErrorBox = document.getElementById('lookup-error-box');
+  const lookupErrorMessage = document.getElementById('lookup-error-message');
+  const lookupErrorDebug = document.getElementById('lookup-error-debug');
+  const lookupResultContainer = document.getElementById('lookup-result-container');
+  const lookupTaskIdDisplay = document.getElementById('lookup-task-id-display');
+  const lookupTaskCostEl = document.getElementById('lookup-task-cost');
+  const lookupMediaWrapper = document.getElementById('lookup-media-wrapper');
+  const lookupDownloadLink = document.getElementById('lookup-download-link');
+  const lookupDownloadsList = document.getElementById('lookup-downloads-list');
+
+  const PAGE_SIZE = 20; // Matches Wiro's own model catalog page size.
+
+  // `allModels` now only holds the models actually loaded so far (current
+  // page(s)), not the full 500+ model catalog - browsing/search/sort/filter
+  // are all served by the backend per-page instead of being filtered
+  // client-side over one large cached batch.
+  let allModels = [];
+  let selectedModel = null; // { slug, title, description, categories, image }
+  let currentSchemaFields = []; // Flattened list of { id, type, ... } for the selected model
+  let schemaRequestToken = 0; // Guards against stale/out-of-order schema responses
+  // Uploaded reference-media state, keyed by param id:
+  // { uploading: bool, error: string|null, files: [{ name, url, contentType, size }] }
+  let fileUploads = {};
+  let fileUploadRequestTokens = {};
+  let fileUploadAbortControllers = {};
+
+  // Model Browser paging/filter/sort state.
+  let modelsRequestToken = 0; // Guards against out-of-order /models responses
+  let currentStart = 0;
+  let currentTotal = 0;
+  let currentSearchTerm = '';
+  let currentCategories = new Set();
+  let currentSort = 'relevance';
+  let knownCategories = new Set(); // Accumulated from every page loaded so far
+  let searchDebounceTimer = null;
+  let isLoadingModels = false;
+
+  // ------------------------------------------------------------------
+  // Model Browser: fetch, render, search, filter, sort, and routing
+  // ------------------------------------------------------------------
+
+  function buildModelsUrl({ start, append }) {
+    const url = new URL(RAILWAY_MODELS_URL);
+    url.searchParams.set('start', String(start));
+    url.searchParams.set('limit', String(PAGE_SIZE));
+    if (currentSearchTerm) url.searchParams.set('search', currentSearchTerm);
+    if (currentCategories.size > 0) url.searchParams.set('categories', [...currentCategories].join(','));
+    if (currentSort) url.searchParams.set('sort', currentSort);
+    return url;
+  }
+
+  // Fetches one page of models from the backend. `append: true` adds to the
+  // existing grid ("Load more"); `append: false` replaces it (new
+  // search/filter/sort, or the initial load).
+  async function fetchModelsPage({ start = 0, append = false } = {}) {
+    const requestToken = ++modelsRequestToken;
+    isLoadingModels = true;
+    updateLoadMoreButton();
+
+    if (!append) {
+      modelsStatus.textContent = 'Loading models…';
+      modelsStatus.classList.remove('hidden');
+    }
+
+    try {
+      const url = buildModelsUrl({ start, append });
+      const res = await fetch(url, { cache: 'no-store' });
+
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}`);
+      }
+
+      const payload = await res.json();
+      if (requestToken !== modelsRequestToken) return; // Stale response, ignore.
+
+      const modelList = Array.isArray(payload) ? payload : (payload.data || []);
+      const normalized = modelList.map(normalizeModel);
+
+      if (append) {
+        allModels = allModels.concat(normalized);
+      } else {
+        allModels = normalized.length > 0 ? normalized : (start === 0 ? FALLBACK_MODELS.map(normalizeModel) : []);
+      }
+
+      currentStart = start + modelList.length;
+      currentTotal = Number(payload.total) || allModels.length;
+
+      normalized.forEach(m => m.categories.forEach(c => knownCategories.add(c)));
+      renderCategoryFilters();
+
+      modelsStatus.classList.add('hidden');
+      renderModelGrid(allModels);
+      updateModelsCount();
+      handleRouteFromHash();
+    } catch (err) {
+      console.error('Could not fetch dynamic models from Railway backend:', err);
+      if (!append && start === 0) {
+        allModels = FALLBACK_MODELS.map(normalizeModel);
+        currentStart = allModels.length;
+        currentTotal = allModels.length;
+        renderModelGrid(allModels);
+        updateModelsCount();
+      }
+      modelsStatus.textContent = `Could not load live models from server (${err.message}).${!append && start === 0 ? ' Showing default list.' : ''}`;
+      modelsStatus.classList.remove('hidden');
+    } finally {
+      isLoadingModels = false;
+      updateLoadMoreButton();
+    }
+  }
+
+  function loadModels() {
+    currentStart = 0;
+    currentTotal = 0;
+    return fetchModelsPage({ start: 0, append: false });
+  }
+
+  function updateModelsCount() {
+    if (!allModels.length) {
+      modelsCountEl.classList.add('hidden');
+      return;
+    }
+    modelsCountEl.textContent = `Showing ${allModels.length} of ${currentTotal} models`;
+    modelsCountEl.classList.remove('hidden');
+  }
+
+  function updateLoadMoreButton() {
+    const hasMore = currentStart < currentTotal;
+    loadMoreBtn.classList.toggle('hidden', !hasMore);
+    loadMoreBtn.disabled = isLoadingModels;
+    loadMoreBtn.textContent = isLoadingModels ? 'Loading…' : 'Load more models ↓';
+  }
+
+  loadMoreBtn.addEventListener('click', () => {
+    if (isLoadingModels) return;
+    fetchModelsPage({ start: currentStart, append: true });
+  });
+
+  // Wiro's raw `categories` array on each model mixes true modalities
+  // (text-to-image, image-to-video, ...) with provider names and unrelated
+  // feature/showcase tags (ByteDance, lora-flux, checkpoint-file, ...),
+  // which made the old pill row show 40+ near-duplicate options. Group the
+  // real modality slugs into a handful of broad, user-facing buckets
+  // instead, similar to Wiro's own "One interface" catalog filters.
+  const CATEGORY_GROUPS = [
+    { label: 'Video', slugs: ['text-to-video', 'image-to-video', 'video-to-video', 'speech-to-video'] },
+    { label: 'Image', slugs: ['text-to-image', 'image-to-image', 'image-editing', 'inpainting'] },
+    { label: 'Audio & Speech', slugs: ['text-to-speech', 'speech-to-speech', 'speech-to-text', 'voice-agent'] },
+    { label: 'Realtime Stream', slugs: ['realtime-conversation'] },
+    { label: 'Music', slugs: ['text-to-music', 'image-to-music', 'text-to-song', 'image-to-song'] },
+    { label: '3D', slugs: ['3d-generation'] },
+    { label: 'LLM', slugs: ['llm', 'llm-reasoning', 'llm-tool-call', 'llm-response-format'] }
+  ];
+  const CATEGORY_GROUP_DOT_COLORS = {
+    'Video': 'bg-blue-400',
+    'Image': 'bg-purple-400',
+    'Audio & Speech': 'bg-orange-400',
+    'Realtime Stream': 'bg-red-400',
+    'Music': 'bg-fuchsia-400',
+    '3D': 'bg-teal-400',
+    'LLM': 'bg-green-400'
+  };
+  let activeCategoryGroups = new Set(); // group labels, e.g. 'Video'
+
+  // Big, icon-led "jump straight into a model category" nav, mirroring
+  // Wiro's own homepage category bar. Each entry maps to one (or more) of
+  // the real CATEGORY_GROUPS above so clicking it actually filters the
+  // Model Browser below to matching models - clicking an already-active
+  // icon again toggles it off and shows the full catalog.
+  const BIG_ICON_CATEGORIES = [
+    {
+      key: 'video',
+      label: 'Video',
+      groups: ['Video'],
+      color: 'text-violet-400',
+      icon: '<path d="M4 6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2.2l4.1-2.3A1 1 0 0 1 20.6 7v10a1 1 0 0 1-1.5.9L15 15.8V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z"/>'
+    },
+    {
+      key: 'image',
+      label: 'Image',
+      groups: ['Image'],
+      color: 'text-pink-400',
+      icon: '<path fill-rule="evenodd" clip-rule="evenodd" d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5zm2 12 4-4.5 2.8 3 3.2-4 4 5.5H6z"/>'
+    },
+    {
+      key: 'audio-speech',
+      label: 'Audio & Speech',
+      groups: ['Audio & Speech'],
+      color: 'text-amber-400',
+      icon: '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0H3a9 9 0 0 0 8 8.94V22h2v-2.06A9 9 0 0 0 21 11h-2z"/>'
+    },
+    {
+      key: 'music',
+      label: 'Music',
+      groups: ['Music'],
+      color: 'text-rose-400',
+      icon: '<path d="M9 18V5l11-2v13" /><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>'
+    },
+    {
+      key: 'llm-chat',
+      label: 'LLM & Chat',
+      groups: ['LLM'],
+      color: 'text-emerald-400',
+      icon: '<path fill-rule="evenodd" clip-rule="evenodd" d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>'
+    },
+    {
+      key: '3d',
+      label: '3D',
+      groups: ['3D'],
+      color: 'text-teal-400',
+      icon: '<path d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.3 6.2 3.4L12 11.4 5.8 8 12 4.3zM5 9.7l6 3.3v6.8l-6-3.3V9.7zm8 10.1v-6.8l6-3.3v6.7l-6 3.4z"/>'
+    }
+  ];
+  let activeBigCategory = null; // key of the selected BIG_ICON_CATEGORIES entry, or null = all
+
+  function renderCategoryFilters() {
+    renderBigIconCategories();
+    renderActiveFilterChip();
+  }
+
+  function renderBigIconCategories() {
+    const container = document.getElementById('category-icons');
+    if (!container) return;
+    container.innerHTML = '';
+
+    BIG_ICON_CATEGORIES.forEach(cat => {
+      const isActive = activeBigCategory === cat.key;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'flex flex-col items-center gap-2 group w-16 sm:w-20';
+      btn.innerHTML = `
+        <span class="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center border transition ${
+          isActive
+            ? 'bg-indigo-950/60 border-indigo-500 shadow-lg shadow-indigo-500/10'
+            : 'bg-slate-900 border-slate-800 group-hover:border-indigo-500/70'
+        }">
+          <svg class="w-6 h-6 sm:w-7 sm:h-7 ${cat.color}" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="0">${cat.icon}</svg>
+        </span>
+        <span class="text-xs font-semibold ${isActive ? 'text-white' : 'text-slate-300'}">${escapeHtml(cat.label)}</span>
+      `;
+      btn.addEventListener('click', () => selectBigCategory(cat.key));
+      container.appendChild(btn);
+    });
+  }
+
+  // Renders a small "Filtering: X ✕" chip above the Model Browser table so
+  // it's obvious a category filter from the big-icon nav is active, with a
+  // one-click way back to the full catalog.
+  function renderActiveFilterChip() {
+    categoryFiltersEl.innerHTML = '';
+    if (!activeBigCategory) return;
+
+    const cat = BIG_ICON_CATEGORIES.find(c => c.key === activeBigCategory);
+    if (!cat) return;
+
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'inline-flex items-center gap-1.5 text-xs font-medium rounded-full px-3 py-1.5 border bg-indigo-600/90 border-indigo-500 text-white transition hover:bg-indigo-600';
+    chip.innerHTML = `Filtering: ${escapeHtml(cat.label)} <span aria-hidden="true">✕</span>`;
+    chip.addEventListener('click', () => selectBigCategory(cat.key)); // toggling the same key clears it
+    categoryFiltersEl.appendChild(chip);
+  }
+
+  // Clicking a big-icon category always "jumps" the user into that model
+  // category: it sets the filter, scrolls the Model Browser into view, and
+  // reloads the filtered list - clicking the already-active one toggles
+  // back to the full catalog.
+  function selectBigCategory(key) {
+    activeBigCategory = activeBigCategory === key ? null : key;
+
+    const cat = BIG_ICON_CATEGORIES.find(c => c.key === activeBigCategory);
+    activeCategoryGroups = new Set(cat ? [cat.key] : []);
+    currentCategories = new Set(
+      (cat ? cat.groups : []).flatMap(label => {
+        const found = CATEGORY_GROUPS.find(g => g.label === label);
+        return found ? found.slugs : [];
+      })
+    );
+
+    renderBigIconCategories();
+    renderActiveFilterChip();
+    loadModels();
+    document.getElementById('browser-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Given a model's raw category slugs, find the broad group it belongs to
+  // (for the "Category" table column) and whatever's left over (for "Tags").
+  function classifyCategories(categories) {
+    const list = Array.isArray(categories) ? categories : [];
+    let primaryGroup = null;
+    for (const group of CATEGORY_GROUPS) {
+      if (list.some(c => group.slugs.includes(c))) {
+        primaryGroup = group.slugs.find(s => list.includes(s));
+        break;
+      }
+    }
+    const tags = list.filter(c => c !== primaryGroup);
+    return { primary: primaryGroup, tags };
+  }
+
+  function formatCategoryLabel(slug) {
+    if (!slug) return 'Model';
+    return slug
+      .split('-')
+      .map(word => (word === 'to' ? 'to' : word.charAt(0).toUpperCase() + word.slice(1)))
+      .join(' ');
+  }
+
+  modelSortSelect.addEventListener('change', () => {
+    currentSort = modelSortSelect.value || 'relevance';
+    loadModels();
+  });
+
+  // Some Wiro CDN thumbnails come back as plain `http://` URLs; browsers
+  // silently block that as mixed content on an https page (and the <img>
+  // just fires `error`), which is why every card fell back to "No preview".
+  // Upgrade to https before ever setting it as a src.
+  function sanitizeImageUrl(url) {
+    if (!url || typeof url !== 'string') return null;
+    const trimmed = url.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith('http://')) return `https://${trimmed.slice('http://'.length)}`;
+    return trimmed;
+  }
+
+  // Some models (e.g. "video effect" models like Storm Dance Crowd) have a
+  // *video* file as their cover/thumbnail on Wiro's own site rather than a
+  // still image - `model.image`/the first sample is an .mp4/.webm URL.
+  // Rendering that through an <img> tag silently fails (fires `error`) and
+  // the card falls back to "No preview", even though Wiro's own page shows
+  // it fine as a <video>. Detect that case so the thumbnail can be rendered
+  // with the right element.
+  function isVideoUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i.test(url);
+  }
+
+  // Text-to-speech/voice models (e.g. Eleven V4) have *audio* sample
+  // outputs (mp3/wav/etc.) rather than images or video. Rendering those
+  // through an <img> tag always fails to load (fires `error`, no fallback),
+  // which is why their "Sample outputs" thumbnails showed broken-image
+  // placeholders instead of a playable preview. Detect that case so the
+  // gallery can render an <audio> player instead.
+  function isAudioUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return /\.(mp3|wav|ogg|oga|m4a|aac|flac|weba)(\?|#|$)/i.test(url);
+  }
+
+  function normalizeModel(m) {
+    const slug = m.slug || (m.owner && m.project ? `${m.owner}/${m.project}` : (m.id || m.name || ''));
+    const categories = Array.isArray(m.categories) && m.categories.length > 0
+      ? m.categories
+      : [m.category || m.type || 'Model'];
+    // Wiro's /Tool/List (and /Tool/Detail) return a `samples` array of
+    // example output URLs per model - previously only `samples[0]` was kept
+    // (as a cover-image fallback) and the rest were discarded, even though
+    // Wiro's own site shows all of them in a "Sample outputs" gallery on the
+    // model page. Keep the full, sanitized list so the model detail view can
+    // render it too.
+    const sampleUrls = Array.isArray(m.samples)
+      ? m.samples.map(sanitizeImageUrl).filter(Boolean)
+      : [];
+    // Fall back to the first example output when no cover image is set,
+    // so the table still has *something* to preview when possible.
+    const coverUrl = sanitizeImageUrl(m.image) || sampleUrls[0] || null;
+    return {
+      slug,
+      owner: m.owner || (slug.includes('/') ? slug.split('/')[0] : ''),
+      title: m.title || m.name || slug,
+      description: m.description || '',
+      categories,
+      tags: Array.isArray(m.tags) ? m.tags : [],
+      image: coverUrl,
+      imageIsVideo: isVideoUrl(coverUrl),
+      samples: sampleUrls,
+      dynamicprice: m.dynamicprice || null,
+      approximatelycost: m.approximatelycost || null
+    };
+  }
+
+  function renderModelGrid(models) {
+    modelsGrid.innerHTML = '';
+
+    if (!models.length) {
+      const empty = document.createElement('tr');
+      empty.innerHTML = `<td colspan="5" class="text-slate-400 text-sm text-center py-6">No models match your search.</td>`;
+      modelsGrid.appendChild(empty);
+      return;
+    }
+
+    models.forEach(model => {
+      const { primary, tags: extraTags } = classifyCategories(model.categories);
+      const categoryLabel = formatCategoryLabel(primary || model.categories[0]);
+
+      const row = document.createElement('tr');
+      row.className = 'hover:bg-slate-800/50 transition cursor-pointer';
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+
+      const modelCell = document.createElement('td');
+      modelCell.className = 'px-4 py-3';
+      const modelCellInner = document.createElement('div');
+      modelCellInner.className = 'flex items-center gap-3';
+
+      const thumbWrapper = document.createElement('div');
+      thumbWrapper.className = 'w-12 h-12 shrink-0 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-center overflow-hidden';
+      if (model.image && model.imageIsVideo) {
+        const video = document.createElement('video');
+        video.src = model.image;
+        video.className = 'w-full h-full object-cover';
+        video.muted = true;
+        video.autoplay = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        video.addEventListener('error', () => {
+          video.remove();
+          thumbWrapper.appendChild(createThumbnailPlaceholder());
+        }, { once: true });
+        thumbWrapper.appendChild(video);
+      } else if (model.image) {
+        const img = document.createElement('img');
+        img.src = model.image;
+        img.alt = model.title || model.slug;
+        img.loading = 'lazy';
+        img.referrerPolicy = 'no-referrer';
+        img.className = 'w-full h-full object-cover';
+        img.addEventListener('error', () => {
+          img.remove();
+          thumbWrapper.appendChild(createThumbnailPlaceholder());
+        }, { once: true });
+        thumbWrapper.appendChild(img);
+      } else {
+        thumbWrapper.appendChild(createThumbnailPlaceholder());
+      }
+
+      const titleWrapper = document.createElement('div');
+      titleWrapper.className = 'min-w-0';
+      titleWrapper.innerHTML = `
+        <p class="font-semibold text-slate-100 text-sm truncate">${escapeHtml(model.title)}</p>
+        <code class="text-blue-300 text-xs break-all">${escapeHtml(model.slug)}</code>
+      `;
+
+      modelCellInner.appendChild(thumbWrapper);
+      modelCellInner.appendChild(titleWrapper);
+      modelCell.appendChild(modelCellInner);
+
+      const providerCell = document.createElement('td');
+      providerCell.className = 'px-4 py-3 text-slate-400 text-sm whitespace-nowrap';
+      providerCell.textContent = model.owner || '—';
+
+      const categoryCell = document.createElement('td');
+      categoryCell.className = 'px-4 py-3';
+      categoryCell.innerHTML = `<span class="inline-block text-xs font-medium rounded px-2 py-1 border border-blue-800 bg-blue-950 text-blue-300 whitespace-nowrap">${escapeHtml(categoryLabel)}</span>`;
+
+      const tagsCell = document.createElement('td');
+      tagsCell.className = 'px-4 py-3';
+      tagsCell.innerHTML = [...new Set([...extraTags, ...model.tags])]
+        .slice(0, 3)
+        .map(tag => `<span class="inline-block text-xs rounded px-2 py-1 border border-slate-700 bg-slate-800 text-slate-300 mr-1 mb-1 whitespace-nowrap">${escapeHtml(tag)}</span>`)
+        .join('');
+
+      const actionCell = document.createElement('td');
+      actionCell.className = 'px-4 py-3 text-right';
+      actionCell.innerHTML = `<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400">View model →</span>`;
+
+      row.appendChild(modelCell);
+      row.appendChild(providerCell);
+      row.appendChild(categoryCell);
+      row.appendChild(tagsCell);
+      row.appendChild(actionCell);
+
+      row.addEventListener('click', () => selectModel(model));
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectModel(model);
+        }
+      });
+
+      modelsGrid.appendChild(row);
+    });
+  }
+
+  function createThumbnailPlaceholder() {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'w-full h-full flex items-center justify-center text-slate-600 text-[10px] text-center leading-tight px-1';
+    placeholder.textContent = 'No preview';
+    return placeholder;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str == null ? '' : String(str);
+    return div.innerHTML;
+  }
+
+  modelSearch.addEventListener('input', () => {
+    clearTimeout(searchDebounceTimer);
+    const term = modelSearch.value.trim();
+
+    searchDebounceTimer = setTimeout(() => {
+      currentSearchTerm = term;
+      loadModels();
+    }, 300);
+  });
+
+  // ------------------------------------------------------------------
+  // Navigation between Model Browser and Model Run page
+  // ------------------------------------------------------------------
+
+  function selectModel(model) {
+    selectedModel = model;
+    window.location.hash = `model/${encodeURIComponent(model.slug)}`;
+    showModelView(model);
+  }
+
+  function showModelView(model) {
+    modelTitleEl.textContent = model.title;
+    modelSlugEl.textContent = model.slug;
+    modelDescriptionEl.textContent = model.description || '';
+    modelDescriptionEl.classList.toggle('hidden', !model.description);
+    renderSampleOutputs(model.samples);
+
+    errorBox.classList.add('hidden');
+    outputContainer.classList.add('hidden');
+    resultCard.classList.add('hidden');
+    promptInput.value = '';
+    resetOutputDetails();
+    resetLookupResult();
+
+    heroSectionEl?.classList.add('hidden');
+    categoryNavSectionEl?.classList.add('hidden');
+    popularToolsSectionEl?.classList.add('hidden');
+    browserView.classList.add('hidden');
+    modelView.classList.remove('hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    loadModelSchema(model);
+  }
+
+  // Wiro's own model page shows a "Sample outputs" gallery of example
+  // generations (images and/or videos) for that model - `/models` already
+  // returns this as `samples`, it just wasn't rendered anywhere. Mirror that
+  // here as a sliding carousel (like the homepage hero) so users can browse
+  // through what a model produces before running it.
+  let sampleOutputsData = [];
+  let sampleOutputsIndex = 0;
+
+  function renderSampleOutputs(samples) {
+    sampleOutputsData = Array.isArray(samples) ? samples.filter(Boolean) : [];
+    sampleOutputsIndex = 0;
+    sampleOutputsSlidesEl.innerHTML = '';
+    sampleOutputsDotsEl.innerHTML = '';
+    sampleOutputsThumbsEl.innerHTML = '';
+
+    if (sampleOutputsData.length === 0) {
+      sampleOutputsContainer.classList.add('hidden');
+      return;
+    }
+
+    sampleOutputsData.forEach((url, index) => {
+      const panel = document.createElement('div');
+      panel.className = 'relative w-full shrink-0 aspect-video bg-slate-900';
+
+      const model3DExt = get3DExtension(url);
+      if (model3DExt) {
+        render3DModel(url, panel);
+      } else if (isVideoUrl(url)) {
+        const video = document.createElement('video');
+        video.src = url;
+        video.className = 'absolute inset-0 w-full h-full object-cover';
+        video.muted = true;
+        video.controls = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        video.addEventListener('error', () => panel.remove(), { once: true });
+        panel.appendChild(video);
+      } else if (isAudioUrl(url)) {
+        const audioWrap = document.createElement('div');
+        audioWrap.className = 'absolute inset-0 flex items-center justify-center p-4 bg-slate-900';
+        const audio = document.createElement('audio');
+        audio.src = url;
+        audio.controls = true;
+        audio.preload = 'metadata';
+        audio.className = 'w-full max-w-xs';
+        audio.addEventListener('error', () => panel.remove(), { once: true });
+        audioWrap.appendChild(audio);
+        panel.appendChild(audioWrap);
+      } else {
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = `Sample output ${index + 1}`;
+        img.loading = 'lazy';
+        img.referrerPolicy = 'no-referrer';
+        img.className = 'absolute inset-0 w-full h-full object-cover';
+        img.addEventListener('error', () => panel.remove(), { once: true });
+        panel.appendChild(img);
+      }
+
+      sampleOutputsSlidesEl.appendChild(panel);
+
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.setAttribute('aria-label', `Go to sample ${index + 1}`);
+      dot.addEventListener('click', () => goToSampleSlide(index));
+      sampleOutputsDotsEl.appendChild(dot);
+
+      sampleOutputsThumbsEl.appendChild(renderSampleOutputThumb(url, index, model3DExt));
+    });
+
+    updateSampleOutputsTransform();
+    sampleOutputsContainer.classList.remove('hidden');
+  }
+
+  // Builds one small clickable thumbnail (below the main frame) per sample
+  // output, mirroring Wiro's own model page gallery strip - clicking a
+  // thumbnail jumps the big main preview above to that sample, same as
+  // clicking its dot.
+  function renderSampleOutputThumb(url, index, model3DExt) {
+    const thumb = document.createElement('button');
+    thumb.type = 'button';
+    thumb.dataset.sampleIndex = String(index);
+    thumb.setAttribute('aria-label', `Show sample ${index + 1}`);
+    thumb.className = 'relative w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition focus:outline-none focus:ring-2 focus:ring-blue-500';
+
+    if (model3DExt) {
+      thumb.innerHTML = '<div class="absolute inset-0 flex items-center justify-center bg-slate-800 text-teal-300 text-[10px] font-semibold uppercase">3D</div>';
+    } else if (isVideoUrl(url)) {
+      const video = document.createElement('video');
+      video.src = url;
+      video.className = 'absolute inset-0 w-full h-full object-cover';
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      video.addEventListener('error', () => {
+        video.remove();
+        thumb.appendChild(createThumbnailPlaceholder());
+      }, { once: true });
+      thumb.appendChild(video);
+    } else if (isAudioUrl(url)) {
+      // Audio can't be meaningfully previewed in a 64x64 thumbnail - show a
+      // speaker icon instead; the real <audio> player is in the main frame
+      // above (clicking the thumb still jumps the main frame to it).
+      thumb.innerHTML = '<div class="absolute inset-0 flex items-center justify-center bg-slate-800 text-blue-300 text-xl">🔊</div>';
+    } else {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = `Sample output ${index + 1} thumbnail`;
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.className = 'absolute inset-0 w-full h-full object-cover';
+      img.addEventListener('error', () => {
+        img.remove();
+        thumb.appendChild(createThumbnailPlaceholder());
+      }, { once: true });
+      thumb.appendChild(img);
+    }
+
+    thumb.addEventListener('click', () => goToSampleSlide(index));
+    return thumb;
+  }
+
+  function updateSampleOutputsTransform() {
+    sampleOutputsSlidesEl.style.transform = `translateX(-${sampleOutputsIndex * 100}%)`;
+    [...sampleOutputsDotsEl.children].forEach((dot, i) => {
+      dot.className = `h-1.5 rounded-full transition-all ${i === sampleOutputsIndex ? 'w-5 bg-white' : 'w-1.5 bg-white/40 hover:bg-white/70'}`;
+    });
+    [...sampleOutputsThumbsEl.children].forEach((thumb, i) => {
+      thumb.className = `relative w-16 h-16 shrink-0 rounded-lg overflow-hidden border-2 transition focus:outline-none focus:ring-2 focus:ring-blue-500 ${i === sampleOutputsIndex ? 'border-blue-500' : 'border-slate-800 hover:border-slate-600'}`;
+    });
+  }
+
+  function goToSampleSlide(index) {
+    if (sampleOutputsData.length === 0) return;
+    sampleOutputsIndex = ((index % sampleOutputsData.length) + sampleOutputsData.length) % sampleOutputsData.length;
+    updateSampleOutputsTransform();
+  }
+
+  sampleOutputsPrevBtn?.addEventListener('click', () => goToSampleSlide(sampleOutputsIndex - 1));
+  sampleOutputsNextBtn?.addEventListener('click', () => goToSampleSlide(sampleOutputsIndex + 1));
+
+  // ------------------------------------------------------------------
+  // Model Schema: fetch each model's real parameters and render inputs
+  // ------------------------------------------------------------------
+  // Different models require different parameters (e.g. SeeDream V4 needs
+  // `size`, `maxImages` and `watermark`, while a video model needs
+  // `duration`/`aspect_ratio`). Rather than hardcoding those per model, we
+  // fetch the model's schema from the backend and render matching form
+  // fields, so required parameters are always collected before submitting.
+  function isThreeDModel(categories) {
+    const list = Array.isArray(categories) ? categories : [];
+    const threeDGroup = CATEGORY_GROUPS.find(g => g.label === '3D');
+    return !!threeDGroup && list.some(c => threeDGroup.slugs.includes(c));
+  }
+
+  async function loadModelSchema(model) {
+    const requestToken = ++schemaRequestToken;
+    currentSchemaFields = [];
+    fileUploads = {};
+    dynamicParams.innerHTML = '';
+    paramsStatus.classList.add('hidden');
+    threeDHint.classList.add('hidden');
+    renderEstimatedCost(null);
+
+    try {
+      const res = await fetch(`${RAILWAY_SCHEMA_URL}?model=${encodeURIComponent(model.slug)}`, { cache: 'no-store' });
+      const payload = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(payload.error || `Server returned status ${res.status}`);
+      }
+
+      if (requestToken !== schemaRequestToken) return; // A newer model was selected meanwhile
+
+      const groups = Array.isArray(payload.parameters) ? payload.parameters : [];
+      renderParamFields(groups);
+      renderEstimatedCost(payload.estimatedCost);
+      threeDHint.classList.toggle('hidden', !isThreeDModel(payload.categories || model.categories));
+      // The schema response's estimate was computed before field defaults
+      // were known, so immediately refine it using the actual rendered
+      // default values (e.g. default duration/resolution) - Wiro pricing
+      // depends on those, not just a static baseline.
+      refreshEstimatedCost(model.slug);
+    } catch (err) {
+      if (requestToken !== schemaRequestToken) return;
+      console.error('Could not fetch model schema:', err);
+      // Surface the backend's actual error (e.g. "Model ... was not found"
+      // or an upstream Wiro auth error) instead of a purely generic message,
+      // so misconfigurations are easier to spot than a silent fallback.
+      paramsStatus.textContent = `Could not load extra parameters for this model (${err.message}). Only the prompt will be sent.`;
+      paramsStatus.classList.remove('hidden');
+    }
+  }
+
+  // Shows the currency-converted (CURRENCY_EXCHANGE/CURRENCY_SYMBOL)
+  // pre-generation cost estimate (computed server-side from Wiro's own
+  // pricing signals) above the Generate button, so users know roughly what
+  // a run will cost before they click it. Hidden entirely when no estimate
+  // is available.
+  function renderEstimatedCost(estimate) {
+    if (!estimate || estimate.estimatedAmount == null) {
+      estimatedCostContainer.classList.add('hidden');
+      estimatedCostEl.textContent = '—';
+      return;
+    }
+
+    estimatedCostEl.textContent = estimate.estimatedDisplay || '—';
+    estimatedCostContainer.classList.remove('hidden');
+  }
+
+  // Wiro's pricing is rarely flat - it follows duration, resolution and
+  // similar parameters, so re-fetch the estimate (debounced) whenever the
+  // user edits a form field, instead of only showing a static baseline.
+  let estimateDebounceTimer = null;
+  const ESTIMATE_DEBOUNCE_MS = 400;
+
+  function scheduleEstimateRefresh() {
+    if (!selectedModel) return;
+    clearTimeout(estimateDebounceTimer);
+    estimateDebounceTimer = setTimeout(() => refreshEstimatedCost(selectedModel.slug), ESTIMATE_DEBOUNCE_MS);
+  }
+
+  async function refreshEstimatedCost(modelSlug) {
+    let params;
+    try {
+      params = collectParamValues();
+    } catch {
+      // Incomplete/invalid input (e.g. a required file still uploading) -
+      // leave whatever estimate is currently shown rather than erroring out.
+      return;
+    }
+
+    try {
+      const url = `${RAILWAY_ESTIMATE_URL}?model=${encodeURIComponent(modelSlug)}&params=${encodeURIComponent(JSON.stringify(params))}`;
+      const res = await fetch(url, { cache: 'no-store' });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      if (!selectedModel || selectedModel.slug !== modelSlug) return; // Model changed meanwhile.
+      renderEstimatedCost(payload.estimatedCost);
+    } catch (err) {
+      console.error('Could not refresh cost estimate:', err);
+    }
+  }
+
+  // Event delegation covers every dynamically-rendered param field (number,
+  // select, checkbox, text) without needing a listener per field.
+  dynamicParams.addEventListener('input', scheduleEstimateRefresh);
+  dynamicParams.addEventListener('change', scheduleEstimateRefresh);
+
+  function renderParamFields(groups) {
+    dynamicParams.innerHTML = '';
+    currentSchemaFields = [];
+
+    groups.forEach(group => {
+      (group.items || []).forEach(item => {
+        // The prompt is already collected via the dedicated Text Prompt field above.
+        if (!item.id || item.id.toLowerCase() === 'prompt') return;
+
+        currentSchemaFields.push(item);
+        dynamicParams.appendChild(buildFieldElement(item));
+      });
+    });
+  }
+
+  function buildFieldElement(item) {
+    const wrapper = document.createElement('div');
+
+    const label = document.createElement('label');
+    label.className = 'block text-sm font-medium text-slate-300 mb-1';
+    label.htmlFor = `param-${item.id}`;
+    label.textContent = item.label || item.id;
+    const type = (item.type || '').toLowerCase();
+    const isSeed = /(^|[^a-z])seed([^a-z]|$)/i.test(item.id);
+    if (item.required) {
+      const req = document.createElement('span');
+      req.className = 'text-red-400 ml-1';
+      req.textContent = '*';
+      label.appendChild(req);
+    }
+    wrapper.appendChild(label);
+
+    const baseClass = 'w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition';
+    let input;
+
+    if (FILE_PARAM_TYPES.includes(type)) {
+      // Reference media (images/video/audio) - these Wiro parameter types
+      // need an actual file picker + upload, not a plain text box, so the
+      // user can attach local files instead of typing a URL by hand.
+      wrapper.className = 'sm:col-span-2';
+      return buildFileFieldElement(item, wrapper, label, baseClass);
+    } else if (Array.isArray(item.options) && item.options.length > 0) {
+      input = document.createElement('select');
+      input.className = baseClass;
+      item.options.forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt.value;
+        option.textContent = opt.label || opt.value;
+        input.appendChild(option);
+      });
+      // A <select> already auto-selects its first <option> when no value is
+      // explicitly set, so this parameter is never actually left "empty" -
+      // but make that first-option fallback explicit (matching what Wiro's
+      // own playground shows as the pre-selected default) instead of relying
+      // on incidental browser behavior, and validate that Wiro's reported
+      // `default` is actually one of the real option values before trusting it.
+      const hasValidDefault = item.default != null
+        && item.options.some(opt => String(opt.value) === String(item.default));
+      input.value = hasValidDefault ? item.default : item.options[0].value;
+    } else if (type === 'boolean' || type === 'checkbox') {
+      wrapper.className = 'flex items-center gap-2';
+      label.className = 'text-sm font-medium text-slate-300';
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'h-4 w-4 rounded border-slate-700 bg-slate-950 text-blue-500 focus:ring-blue-500';
+      input.checked = item.default === true || item.default === 'true';
+    } else if (type === 'number' || type === 'integer' || type === 'float') {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.className = baseClass;
+      if (item.min != null) input.min = item.min;
+      if (item.max != null) input.max = item.max;
+      input.step = item.step != null ? item.step : (type === 'integer' ? 1 : 'any');
+      if (item.default != null) input.value = item.default;
+    } else if (type === 'textarea' || type === 'json' || type === 'json-array') {
+      wrapper.className = 'sm:col-span-2';
+      input = document.createElement('textarea');
+      input.rows = 3;
+      input.className = baseClass;
+      if (item.default != null) input.value = item.default;
+    } else {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.className = baseClass;
+      if (item.default != null) input.value = item.default;
+    }
+
+    const autoSeed = isSeed && (input.type === 'number' || input.type === 'text');
+    if (autoSeed) {
+      input.value = generateRandomSeed(item);
+    }
+
+    input.id = `param-${item.id}`;
+    input.name = item.id;
+    if (item.placeholder) {
+      input.placeholder = item.placeholder;
+    } else if (input.type === 'text') {
+      input.placeholder = `Enter ${item.label || item.id}`;
+    }
+    if (item.required && input.type !== 'checkbox') input.required = true;
+
+    const guidance = [item.description, item.note].find(value => typeof value === 'string' && value.trim()) || '';
+    if (guidance) {
+      label.title = guidance;
+      input.title = guidance;
+    }
+    wrapper.appendChild(input);
+
+    if (item.description || item.note || autoSeed) {
+      const help = document.createElement('p');
+      help.className = 'text-xs text-slate-500 mt-1';
+      help.textContent = [item.description || item.note, autoSeed ? 'A random seed is generated automatically; change it to reproduce a result.' : '']
+        .filter(Boolean)
+        .join(' ');
+      wrapper.appendChild(help);
+    }
+
+    return wrapper;
+  }
+
+  function generateRandomSeed(item) {
+    const min = item.min != null && Number.isSafeInteger(Number(item.min))
+      ? Number(item.min)
+      : 0;
+    const max = item.max != null && Number.isSafeInteger(Number(item.max))
+      ? Number(item.max)
+      : 2147483647;
+    const lower = min <= max ? min : 0;
+    const upper = min <= max ? max : 2147483647;
+    const range = upper - lower + 1;
+
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function' && range <= 0x100000000) {
+      const limit = Math.floor(0x100000000 / range) * range;
+      const value = new Uint32Array(1);
+      do {
+        window.crypto.getRandomValues(value);
+      } while (value[0] >= limit);
+      return lower + (value[0] % range);
+    }
+
+    return lower + Math.floor(Math.random() * range);
+  }
+
+  // Builds a file-picker field for `fileinput` (single file), and
+  // `multifileinput`/`combinefileinput` (multiple files, e.g. 1-30
+  // reference_images). Selecting file(s) immediately uploads them to our
+  // backend's /upload endpoint, which relays them to Wiro's File/Upload API
+  // and returns hosted URL(s) that get attached to the run parameters.
+  function buildFileFieldElement(item, wrapper, label, baseClass) {
+    const type = (item.type || '').toLowerCase();
+    const isMulti = type === 'multifileinput' || type === 'combinefileinput';
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.id = `param-${item.id}`;
+    input.name = item.id;
+    input.className = `${baseClass} file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-blue-600 file:text-white file:cursor-pointer cursor-pointer`;
+    input.accept = 'image/*,video/*,audio/*';
+    if (isMulti) input.multiple = true;
+
+    const status = document.createElement('p');
+    status.className = 'text-xs text-slate-500 mt-1';
+    status.textContent = 'No file selected.';
+
+    const previews = document.createElement('div');
+    previews.className = 'mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3';
+
+    const existingUploadState = fileUploads[item.id];
+    fileUploads[item.id] = {
+      uploading: false,
+      error: null,
+      files: existingUploadState && Array.isArray(existingUploadState.files) ? existingUploadState.files : []
+    };
+
+    function renderUploadState() {
+      const upload = fileUploads[item.id] || { uploading: false, error: null, files: [] };
+
+      if (upload.uploading) {
+        status.textContent = 'Uploading...';
+        status.className = 'text-xs text-blue-400 mt-1';
+      } else if (upload.error) {
+        status.textContent = `Upload failed: ${upload.error}`;
+        status.className = 'text-xs text-red-400 mt-1';
+      } else if (!upload.files.length) {
+        status.textContent = 'No file selected.';
+        status.className = 'text-xs text-slate-500 mt-1';
+      } else {
+        status.textContent = `${upload.files.length} file(s) uploaded.`;
+        status.className = 'text-xs text-emerald-400 mt-1';
+      }
+
+      previews.innerHTML = '';
+      upload.files.forEach((file, index) => {
+        const card = document.createElement('div');
+        card.className = 'rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden';
+
+        const preview = createReferencePreview(file);
+        card.appendChild(preview);
+
+        const footer = document.createElement('div');
+        footer.className = 'p-2 space-y-2';
+
+        const title = document.createElement('p');
+        title.className = 'text-xs text-slate-300 truncate';
+        title.textContent = file.name || `Reference ${index + 1}`;
+        footer.appendChild(title);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'w-full rounded-lg border border-red-500/60 text-red-300 text-xs px-2 py-1 hover:bg-red-500/10';
+        removeBtn.textContent = 'Delete reference';
+        removeBtn.setAttribute('aria-label', `Delete reference ${file.name || `#${index + 1}`}`);
+        removeBtn.addEventListener('click', () => {
+          const current = fileUploads[item.id] || { uploading: false, error: null, files: [] };
+          const nextFiles = current.files.filter((_, fileIndex) => fileIndex !== index);
+          fileUploads[item.id] = { uploading: false, error: null, files: nextFiles };
+          renderUploadState();
+        });
+        footer.appendChild(removeBtn);
+
+        card.appendChild(footer);
+        previews.appendChild(card);
+      });
+    }
+
+    input.addEventListener('change', async () => {
+      if (fileUploadAbortControllers[item.id]) {
+        fileUploadAbortControllers[item.id].abort();
+      }
+      const abortController = new AbortController();
+      fileUploadAbortControllers[item.id] = abortController;
+
+      const requestToken = (fileUploadRequestTokens[item.id] || 0) + 1;
+      fileUploadRequestTokens[item.id] = requestToken;
+      const selected = Array.from(input.files || []);
+      if (!selected.length) {
+        const existing = (fileUploads[item.id] && Array.isArray(fileUploads[item.id].files))
+          ? fileUploads[item.id].files
+          : [];
+        fileUploads[item.id] = {
+          uploading: false,
+          error: null,
+          files: isMulti ? existing : []
+        };
+        renderUploadState();
+        if (fileUploadAbortControllers[item.id] === abortController) {
+          delete fileUploadAbortControllers[item.id];
+        }
+        return;
+      }
+
+      const existing = (fileUploads[item.id] && Array.isArray(fileUploads[item.id].files))
+        ? fileUploads[item.id].files
+        : [];
+      const currentFiles = isMulti ? existing : existing.slice(0, 1);
+
+      fileUploads[item.id] = { uploading: true, error: null, files: currentFiles };
+      status.textContent = `Uploading ${selected.length} file(s)…`;
+      status.className = 'text-xs text-blue-400 mt-1';
+      renderUploadState();
+
+      const settled = await Promise.allSettled(
+        selected.map(file => uploadReferenceFile(file, abortController.signal))
+      );
+      const uploaded = [];
+      const failures = [];
+
+      settled.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          uploaded.push(result.value);
+          return;
+        }
+        if (result.reason && result.reason.name === 'AbortError') {
+          return;
+        }
+        const fileName = selected[index] && selected[index].name ? selected[index].name : `File ${index + 1}`;
+        const message = result.reason && result.reason.message ? result.reason.message : 'Upload failed';
+        failures.push(`${fileName}: ${message}`);
+      });
+
+      if (fileUploadRequestTokens[item.id] !== requestToken) {
+        if (fileUploadAbortControllers[item.id] === abortController) {
+          delete fileUploadAbortControllers[item.id];
+        }
+        return;
+      }
+
+      fileUploads[item.id] = {
+        uploading: false,
+        error: failures.length > 0 ? failures.join(' | ') : null,
+        files: isMulti ? [...currentFiles, ...uploaded] : (uploaded[0] ? [uploaded[0]] : [])
+      };
+      renderUploadState();
+      input.value = '';
+      if (fileUploadAbortControllers[item.id] === abortController) {
+        delete fileUploadAbortControllers[item.id];
+      }
+    });
+
+    wrapper.appendChild(input);
+    wrapper.appendChild(status);
+    wrapper.appendChild(previews);
+
+    if (item.description || item.note) {
+      const help = document.createElement('p');
+      help.className = 'text-xs text-slate-500 mt-1';
+      help.textContent = item.description || item.note;
+      wrapper.appendChild(help);
+    }
+
+    return wrapper;
+  }
+
+  function getUploadEndpointCandidates() {
+    return [...new Set([
+      RAILWAY_UPLOAD_URL,
+      `${BACKEND_BASE_URL}/api/upload`
+    ])];
+  }
+
+  function createReferencePreview(file) {
+    const url = file.url || '';
+    const contentType = (file.contentType || '').toLowerCase();
+    const isImage = contentType.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/i.test(url);
+    const isVideo = contentType.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogg)(\?|$)/i.test(url);
+
+    if (isVideo) {
+      const video = document.createElement('video');
+      video.src = url;
+      video.className = 'w-full h-32 object-cover bg-slate-900';
+      video.muted = true;
+      video.controls = true;
+      video.preload = 'metadata';
+      video.playsInline = true;
+      return video;
+    }
+
+    if (isImage) {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = file.name || 'Reference image';
+      img.className = 'w-full h-32 object-cover bg-slate-900';
+      return img;
+    }
+
+    const fallback = document.createElement('div');
+    fallback.className = 'w-full h-32 flex items-center justify-center bg-slate-900 text-slate-400 text-xs px-2 text-center';
+    fallback.textContent = 'Preview unavailable';
+    return fallback;
+  }
+
+  async function uploadReferenceFile(file, signal) {
+    const endpoints = getUploadEndpointCandidates();
+    let lastResponseError = null;
+    let sawNetworkFailure = false;
+    let lastNetworkErrorMessage = '';
+    const credentialsMode = getBackendFetchCredentials();
+
+    for (const endpoint of endpoints) {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+
+      let res;
+      try {
+        res = await fetch(endpoint, {
+          method: 'POST',
+          body: formData,
+          mode: getBackendFetchMode(),
+          credentials: credentialsMode,
+          signal
+        });
+      } catch (networkError) {
+        if (networkError && networkError.name === 'AbortError') {
+          throw networkError;
+        }
+        sawNetworkFailure = true;
+        lastNetworkErrorMessage = networkError && networkError.message
+          ? networkError.message
+          : 'Network error or server unreachable';
+        continue;
+      }
+
+      const payload = await res.json().catch(() => ({}));
+
+      if (res.ok && payload.url) {
+        return {
+          name: payload.name || file.name,
+          url: payload.url,
+          contentType: payload.contentType || file.type || '',
+          size: payload.size || file.size || null
+        };
+      }
+
+      const message = payload.error || `Server returned status ${res.status}`;
+      if (res.status === 404) {
+        const normalizedError = typeof payload.error === 'string'
+          ? payload.error.toLowerCase()
+          : '';
+        const looksLikeMissingRoute = !normalizedError
+          || normalizedError.includes('cannot post')
+          || normalizedError.includes('route')
+          || normalizedError.includes('endpoint')
+          || normalizedError === 'not found';
+
+        if (!looksLikeMissingRoute) {
+          lastResponseError = new Error(message);
+          break;
+        }
+
+        lastResponseError = new Error(message);
+        continue;
+      }
+
+      lastResponseError = new Error(message);
+      break;
+    }
+
+    if (lastResponseError) {
+      throw lastResponseError;
+    }
+
+    if (sawNetworkFailure) {
+      throw new Error(lastNetworkErrorMessage || 'Network error or server unreachable');
+    }
+
+    throw new Error('Upload failed.');
+  }
+
+  // Collects form values for /generate, using the uploaded Wiro URL(s) for
+  // file-type params instead of raw <input type="file"> values (browsers
+  // never expose local file paths/content via .value for security reasons -
+  // the actual media has to already be uploaded via uploadReferenceFile()).
+  // Throws if a required file field's upload hasn't finished/succeeded yet.
+  function collectParamValues() {
+    const params = {};
+
+    currentSchemaFields.forEach(item => {
+      const type = (item.type || '').toLowerCase();
+
+      if (FILE_PARAM_TYPES.includes(type)) {
+        const upload = fileUploads[item.id] || { uploading: false, error: null, files: [] };
+
+        if (upload.uploading) {
+          throw new Error(`"${item.label || item.id}" is still uploading. Please wait for it to finish.`);
+        }
+        if (upload.error) {
+          throw new Error(`"${item.label || item.id}" failed to upload: ${upload.error}`);
+        }
+        if (!upload.files.length) {
+          if (item.required) {
+            throw new Error(`"${item.label || item.id}" is required. Please choose a file.`);
+          }
+          return;
+        }
+
+        if (type === 'combinefileinput') {
+          // Docs: pass an array of URLs directly under the field's own id.
+          params[item.id] = upload.files.map(f => f.url);
+        } else if (type === 'multifileinput') {
+          // Docs: pass URLs via `${id}Url` as a comma-separated string.
+          params[`${item.id}Url`] = upload.files.map(f => f.url).join(',');
+        } else {
+          // fileinput: a plain URL string under the field's own id works directly.
+          params[item.id] = upload.files[0].url;
+        }
+        return;
+      }
+
+      const el = document.getElementById(`param-${item.id}`);
+      if (!el) return;
+
+      if (el.type === 'checkbox') {
+        params[item.id] = el.checked;
+      } else {
+        if (item.required && String(el.value).trim() === '') {
+          throw new Error(`"${item.label || item.id}" is required. Please fill in this field.`);
+        }
+
+        if (type === 'number' || type === 'integer' || type === 'float') {
+          if (el.value !== '') {
+            let value = Number(el.value);
+            if (Number.isFinite(value)) {
+              // Integer parameters (e.g. video duration in seconds, inference
+              // steps) must never be negative or fractional, so round and
+              // clamp to the field's declared range here rather than trusting
+              // native number-input validation alone (it doesn't stop users
+              // from typing "-1" or "7.5").
+              if (type === 'integer') value = Math.round(value);
+              if (item.min != null) value = Math.max(Number(item.min), value);
+              if (item.max != null) value = Math.min(Number(item.max), value);
+              params[item.id] = value;
+            }
+          }
+        } else if (el.value !== '') {
+          params[item.id] = el.value;
+        }
+      }
+    });
+
+    return params;
+  }
+
+
+  function showBrowserView() {
+    selectedModel = null;
+    modelView.classList.add('hidden');
+    heroSectionEl?.classList.remove('hidden');
+    categoryNavSectionEl?.classList.remove('hidden');
+    popularToolsSectionEl?.classList.remove('hidden');
+    browserView.classList.remove('hidden');
+
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }
+
+  window.addEventListener('hashchange', handleRouteFromHash);
+
+  // Clicking the logo (header or footer, both link to `#top`) always takes
+  // the user back to the home view - with every section (hero, categories,
+  // Popular AI Tools, Model Browser) visible again, same as a fresh load.
+  function handleRouteFromHash() {
+    const match = /^#model\/(.+)$/.exec(window.location.hash);
+    if (!match) {
+      showBrowserView();
+      return;
+    }
+
+    const slug = decodeURIComponent(match[1]);
+    const model = allModels.find(m => m.slug === slug);
+
+    if (model) {
+      selectedModel = model;
+      showModelView(model);
+      return;
+    }
+
+    // Deep-linked model isn't in the pages loaded so far (paging replaced
+    // the old "fetch everything once" approach) - look it up directly
+    // instead of silently doing nothing.
+    resolveModelBySlug(slug);
+  }
+
+  // Looks up a single model by its exact "owner/project" slug via the
+  // /models search endpoint, returning the normalized model or null if it
+  // couldn't be found/fetched. Shared by deep-link resolution and the
+  // manual hero carousel override below.
+  async function fetchModelBySlug(slug) {
+    const [, ...rest] = slug.split('/');
+    const projectPart = rest.join('/') || slug;
+
+    try {
+      const url = new URL(RAILWAY_MODELS_URL);
+      url.searchParams.set('search', projectPart);
+      url.searchParams.set('limit', '50');
+
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Server returned status ${res.status}`);
+
+      const payload = await res.json();
+      const modelList = Array.isArray(payload) ? payload : (payload.data || []);
+      return modelList.map(normalizeModel).find(m => m.slug === slug) || null;
+    } catch (err) {
+      console.error('Could not resolve model by slug:', slug, err);
+      return null;
+    }
+  }
+
+  async function resolveModelBySlug(slug) {
+    const match = await fetchModelBySlug(slug);
+    if (match) {
+      selectedModel = match;
+      showModelView(match);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Model Run: generate handling
+  // ------------------------------------------------------------------
+
+  // Bumped on every new submission so a stale/in-flight poll loop from a
+  // previous submit can detect it's been superseded and stop updating the UI.
+  let generationPollToken = 0;
+  const GENERATION_POLL_INTERVAL_MS = 4000;
+  const GENERATION_POLL_MAX_CONSECUTIVE_ERRORS = 5;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    if (!selectedModel) {
+      showError('No model selected. Please choose a model from the browser.');
+      return;
+    }
+
+    errorBox.classList.add('hidden');
+    taskSummaryContainer.classList.add('hidden');
+    outputContainer.classList.add('hidden');
+    resultCard.classList.add('hidden');
+    resetOutputDetails();
+
+    let paramValues;
+    try {
+      paramValues = collectParamValues();
+    } catch (err) {
+      showError(err.message);
+      return;
+    }
+
+    const requestToken = ++generationPollToken;
+
+    submitBtn.disabled = true;
+    btnText.textContent = 'Generating...';
+    spinner.classList.remove('hidden');
+
+    try {
+      const response = await fetch(RAILWAY_BACKEND_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: selectedModel.slug,
+          prompt: promptInput.value.trim(),
+          ...paramValues
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        showError(data.error || 'Failed to generate output.', data.debugOutput);
+        return;
+      }
+
+      // The backend now responds as soon as Wiro hands back a job/task ID -
+      // it no longer waits for the (potentially long-running) generation to
+      // finish before answering. Show the taskId immediately so it's never
+      // lost to a browser/proxy timeout, then poll for the actual result.
+      const taskId = data.taskId;
+      if (!taskId) {
+        showError('Generation started, but no job/task ID was returned.');
+        return;
+      }
+
+      showPendingTask(taskId);
+      await pollGenerationTask(taskId, requestToken);
+      return;
+    } catch (err) {
+      showError('Network error or server unreachable. Please check backend CORS configuration.');
+    }
+
+    submitBtn.disabled = false;
+    btnText.textContent = 'Generate Asset';
+    spinner.classList.add('hidden');
+  });
+
+  // Surfaces the job/task ID the instant it's known, well before the
+  // generation itself has finished, so the user always has it saved even if
+  // this tab is closed or polling below is interrupted.
+  function showPendingTask(taskId) {
+    taskIdEl.textContent = taskId;
+    copyTaskIdBtn.classList.toggle('hidden', !taskId);
+    taskCostEl.textContent = '—';
+    generationStatusEl.textContent = 'Generating… this can take a while for some models. Your job ID above is saved as soon as it exists.';
+    generationStatusEl.classList.remove('hidden');
+    taskSummaryContainer.classList.remove('hidden');
+    resultCard.classList.remove('hidden');
+  }
+
+  // Polls GET /task/:taskId until the generation completes, fails, or this
+  // poll loop is superseded by a newer submission (requestToken mismatch).
+  async function pollGenerationTask(taskId, requestToken) {
+    let consecutiveErrors = 0;
+
+    while (generationPollToken === requestToken) {
+      let response;
+      let data;
+      try {
+        response = await fetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+        data = await response.json();
+        consecutiveErrors = 0;
+      } catch (err) {
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= GENERATION_POLL_MAX_CONSECUTIVE_ERRORS) {
+          if (generationPollToken === requestToken) {
+            generationStatusEl.textContent = `Lost connection while checking status. Use "Retrieve a Previous Generation" below with job ID ${taskId} once you're back online.`;
+            submitBtn.disabled = false;
+            btnText.textContent = 'Generate Asset';
+            spinner.classList.add('hidden');
+          }
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+        continue;
+      }
+
+      if (generationPollToken !== requestToken) return;
+
+      if (data.pending) {
+        await new Promise(resolve => setTimeout(resolve, GENERATION_POLL_INTERVAL_MS));
+        continue;
+      }
+
+      generationStatusEl.classList.add('hidden');
+      submitBtn.disabled = false;
+      btnText.textContent = 'Generate Asset';
+      spinner.classList.add('hidden');
+
+      if (response.ok && data.success) {
+        const mediaUrl = extractMediaUrl(data);
+        const downloads = getDownloadableOutputs(data);
+        const primaryDownloadUrl = mediaUrl || (downloads[0] && downloads[0].url) || '';
+
+        renderTaskDetails(data, downloads);
+        downloadLink.classList.toggle('hidden', !primaryDownloadUrl);
+        downloadLink.href = primaryDownloadUrl;
+
+        if (mediaUrl) {
+          renderMedia(mediaUrl);
+        } else {
+          renderEmptyMediaState();
+        }
+
+        if (mediaUrl || downloads.length > 0) {
+          outputContainer.classList.remove('hidden');
+        } else if (taskSummaryContainer.classList.contains('hidden')) {
+          showError('Generation finished, but no media URL could be extracted.');
+        }
+      } else {
+        showError(data.error || 'Failed to generate output.', data.debugOutput);
+      }
+      return;
+    }
+  }
+
+  // Helper function to extract a valid image/video URL from the /generate
+  // response. Wiro's structured `task.outputs[]` (each with a reliable
+  // `.url`) is the authoritative source - the backend already surfaces the
+  // first one as `data.mediaUrl` for convenience. `data.output`
+  // (task.debugoutput) is only a free-form debug string and doesn't always
+  // contain a directly usable URL, so it's kept only as a last-resort fallback.
+  function extractMediaUrl(data) {
+    if (data.mediaUrl) return data.mediaUrl;
+
+    const outputs = data.outputs || (data.task && data.task.outputs) || [];
+    const outputWithUrl = outputs.find(o => o && o.url);
+    if (outputWithUrl) return outputWithUrl.url;
+
+    let raw = data.output || (data.task && data.task.debugoutput);
+
+    if (!raw) return null;
+
+    if (typeof raw === 'object') {
+      return raw.url || raw.video || raw.image || raw.file || (Array.isArray(raw) ? raw[0] : null);
+    }
+
+    if (typeof raw === 'string') {
+      if (raw.startsWith('http://') || raw.startsWith('https://')) {
+        return raw;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed.url || parsed.video || parsed.image || parsed.file || (Array.isArray(parsed) ? parsed[0] : null);
+      } catch (e) {
+        // Fallback match for URL string inside unformatted text
+        const match = raw.match(/https?:\/\/[^\s"']+/);
+        return match ? match[0] : null;
+      }
+    }
+
+    return null;
+  }
+
+  function getDownloadableOutputs(data) {
+    const directDownloads = Array.isArray(data.downloads) ? data.downloads : [];
+    if (directDownloads.length > 0) {
+      return directDownloads.filter(item => item && item.url);
+    }
+
+    const outputs = data.outputs || (data.task && data.task.outputs) || [];
+    return outputs
+      .filter(output => output && output.url)
+      .map((output, index) => ({
+        id: `${output.name || 'output'}-${index + 1}`,
+        name: output.name || `Output ${index + 1}`,
+        url: output.url,
+        contentType: output.contenttype || output.contentType || 'application/octet-stream',
+        size: output.size || null
+      }));
+  }
+
+  function renderTaskDetails(data, downloads) {
+    const taskId = data.taskId || (data.task && data.task.id) || '—';
+    taskIdEl.textContent = taskId;
+    copyTaskIdBtn.classList.toggle('hidden', taskId === '—');
+    // Only the final, already-converted cost is ever shown - Wiro's raw USD
+    // amount and the conversion rate are intentionally never surfaced here.
+    taskCostEl.textContent = data.finalCostDisplay ?? '—';
+
+    taskSummaryContainer.classList.toggle(
+      'hidden',
+      taskId === '—' && taskCostEl.textContent === '—' && downloads.length === 0
+    );
+    downloadsList.innerHTML = '';
+
+    if (downloads.length === 0) {
+      downloadsList.innerHTML = '<p class="text-slate-500">No download files were returned for this task.</p>';
+      return;
+    }
+
+    downloads.forEach((download, index) => {
+      const item = document.createElement('a');
+      item.href = download.url;
+      item.target = '_blank';
+      item.rel = 'noopener noreferrer';
+      item.className = 'flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 hover:border-slate-700';
+      item.innerHTML = `
+        <span>
+          <span class="block text-slate-100">${escapeHtml(download.name || `Output ${index + 1}`)}</span>
+          <span class="block text-xs text-slate-500">${escapeHtml(download.contentType || 'application/octet-stream')}</span>
+        </span>
+        <span class="text-blue-400">Open ↗</span>
+      `;
+      downloadsList.appendChild(item);
+    });
+  }
+
+  copyTaskIdBtn.addEventListener('click', async () => {
+    const taskId = taskIdEl.textContent.trim();
+    if (!taskId || taskId === '—') return;
+    await copyTextToClipboard(taskId);
+    const originalLabel = copyTaskIdBtn.textContent;
+    copyTaskIdBtn.textContent = 'Copied!';
+    setTimeout(() => { copyTaskIdBtn.textContent = originalLabel; }, 1500);
+  });
+
+  async function copyTextToClipboard(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch (err) {
+      // Fall through to the legacy fallback below.
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand('copy');
+    } catch (err) {
+      // Best-effort only; nothing more we can do here.
+    }
+    document.body.removeChild(textarea);
+  }
+
+  function resetOutputDetails() {
+    taskIdEl.textContent = '—';
+    copyTaskIdBtn.classList.add('hidden');
+    taskCostEl.textContent = '—';
+    downloadsList.innerHTML = '';
+    generationStatusEl.textContent = '';
+    generationStatusEl.classList.add('hidden');
+    taskSummaryContainer.classList.add('hidden');
+    downloadLink.classList.add('hidden');
+    downloadLink.removeAttribute('href');
+    mediaWrapper.innerHTML = '';
+  }
+
+  // 3D model file extensions Wiro's 3D tools (e.g. image-to-3d/text-to-3d
+  // generators) commonly output. `.glb`/`.gltf`/`.usdz` are natively
+  // renderable in-browser by the `<model-viewer>` web component (mouse-drag
+  // to orbit, scroll/pinch to zoom - no extra Three.js wiring needed);
+  // other mesh formats (obj/fbx/stl/ply) aren't, so those just fall back to
+  // the download link below instead of a broken/blank viewer.
+  const MODEL_VIEWER_EXTENSIONS = ['glb', 'gltf', 'usdz'];
+
+  function get3DExtension(url) {
+    const clean = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(String(url || ''));
+    const ext = (clean && clean[1] || '').toLowerCase();
+    return MODEL_VIEWER_EXTENSIONS.includes(ext) ? ext : null;
+  }
+
+  // Renders an interactive 3D preview (orbit by dragging, zoom with
+  // scroll/pinch) using Google's `<model-viewer>` web component, mirroring
+  // how Wiro's own site previews 3D model outputs in-browser.
+  function render3DModel(url, wrapper) {
+    const viewer = document.createElement('model-viewer');
+    viewer.setAttribute('src', url);
+    viewer.setAttribute('camera-controls', '');
+    viewer.setAttribute('touch-action', 'pan-y');
+    viewer.setAttribute('auto-rotate', '');
+    viewer.setAttribute('shadow-intensity', '1');
+    viewer.setAttribute('exposure', '1');
+    viewer.setAttribute('ar', '');
+    viewer.setAttribute('alt', 'Generated 3D model - drag to orbit, scroll/pinch to zoom');
+    viewer.className = 'w-full h-full bg-slate-950';
+    viewer.style.setProperty('--poster-color', 'transparent');
+    wrapper.appendChild(viewer);
+  }
+
+  function renderEmptyMediaState() {
+    mediaWrapper.innerHTML = '<p class="px-6 text-center text-sm text-slate-400">Generation completed. Preview unavailable, but the generated file links are ready below.</p>';
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  // Helper function to render an <img>, <video> or interactive 3D
+  // <model-viewer> element, depending on the output's file type.
+  function renderMedia(url, wrapper = mediaWrapper) {
+    wrapper.innerHTML = '';
+
+    const model3DExt = get3DExtension(url);
+    if (model3DExt) {
+      render3DModel(url, wrapper);
+      return;
+    }
+
+    const isVideo = url.endsWith('.mp4') || url.endsWith('.webm') || url.includes('/video');
+
+    if (isVideo) {
+      const video = document.createElement('video');
+      video.src = url;
+      video.controls = true;
+      video.autoplay = true;
+      video.loop = true;
+      video.className = 'w-full h-full object-cover';
+      wrapper.appendChild(video);
+    } else {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = 'Generated Output';
+      img.className = 'w-full h-full object-cover';
+      wrapper.appendChild(img);
+    }
+  }
+
+  function showError(msg, debugOutput) {
+    errorMessage.textContent = typeof msg === 'object' ? JSON.stringify(msg) : msg;
+    if (debugOutput && String(debugOutput).trim()) {
+      errorDebug.textContent = String(debugOutput).trim();
+      errorDebug.classList.remove('hidden');
+    } else {
+      errorDebug.textContent = '';
+      errorDebug.classList.add('hidden');
+    }
+    errorBox.classList.remove('hidden');
+    resultCard.classList.remove('hidden');
+  }
+
+  // ------------------------------------------------------------------
+  // Retrieve a previously finished (or failed) generation by job/task ID
+  // ------------------------------------------------------------------
+
+  function resetLookupResult() {
+    lookupStatus.classList.add('hidden');
+    lookupStatus.textContent = '';
+    lookupErrorBox.classList.add('hidden');
+    lookupErrorMessage.textContent = '';
+    lookupErrorDebug.textContent = '';
+    lookupErrorDebug.classList.add('hidden');
+    lookupResultContainer.classList.add('hidden');
+    lookupTaskIdDisplay.textContent = '—';
+    lookupTaskCostEl.textContent = '—';
+    lookupMediaWrapper.innerHTML = '';
+    lookupDownloadLink.classList.add('hidden');
+    lookupDownloadLink.removeAttribute('href');
+    lookupDownloadsList.innerHTML = '';
+  }
+
+  function renderLookupResult(data) {
+    const downloads = getDownloadableOutputs(data);
+    const mediaUrl = extractMediaUrl(data);
+    const primaryDownloadUrl = mediaUrl || (downloads[0] && downloads[0].url) || '';
+
+    lookupTaskIdDisplay.textContent = data.taskId || (data.task && data.task.id) || '—';
+    // As with a fresh generation, only the final converted cost is ever
+    // shown here - never Wiro's raw USD amount nor the conversion rate.
+    lookupTaskCostEl.textContent = data.finalCostDisplay ?? '—';
+
+    if (mediaUrl) {
+      renderMedia(mediaUrl, lookupMediaWrapper);
+    } else {
+      lookupMediaWrapper.innerHTML = '<p class="px-6 text-center text-sm text-slate-400">No preview available, but the generated file links are ready below.</p>';
+    }
+
+    lookupDownloadLink.classList.toggle('hidden', !primaryDownloadUrl);
+    lookupDownloadLink.href = primaryDownloadUrl;
+
+    lookupDownloadsList.innerHTML = '';
+    if (downloads.length === 0) {
+      lookupDownloadsList.innerHTML = '<p class="text-slate-500">No download files were returned for this task.</p>';
+    } else {
+      downloads.forEach((download, index) => {
+        const item = document.createElement('a');
+        item.href = download.url;
+        item.target = '_blank';
+        item.rel = 'noopener noreferrer';
+        item.className = 'flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 hover:border-slate-700';
+        item.innerHTML = `
+          <span>
+            <span class="block text-slate-100">${escapeHtml(download.name || `Output ${index + 1}`)}</span>
+            <span class="block text-xs text-slate-500">${escapeHtml(download.contentType || 'application/octet-stream')}</span>
+          </span>
+          <span class="text-blue-400">Open ↗</span>
+        `;
+        lookupDownloadsList.appendChild(item);
+      });
+    }
+
+    lookupResultContainer.classList.remove('hidden');
+  }
+
+  lookupForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const taskId = lookupTaskIdInput.value.trim();
+    if (!taskId) return;
+
+    resetLookupResult();
+    lookupBtn.disabled = true;
+    lookupBtn.textContent = 'Checking…';
+    lookupStatus.classList.remove('hidden');
+    lookupStatus.textContent = 'Looking up task…';
+
+    try {
+      const response = await fetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, {
+        method: 'GET',
+        mode: getBackendFetchMode(),
+        credentials: getBackendFetchCredentials()
+      });
+      const data = await response.json();
+      lookupStatus.classList.add('hidden');
+
+      if (data.pending) {
+        lookupStatus.classList.remove('hidden');
+        lookupStatus.textContent = data.error || 'This task is still queued or running. Please check again shortly.';
+        return;
+      }
+
+      if (response.ok && data.success) {
+        renderLookupResult(data);
+      } else {
+        lookupErrorMessage.textContent = data.error || 'Could not find a generation for this job/task ID.';
+        if (data.debugOutput && String(data.debugOutput).trim()) {
+          lookupErrorDebug.textContent = String(data.debugOutput).trim();
+          lookupErrorDebug.classList.remove('hidden');
+        }
+        lookupErrorBox.classList.remove('hidden');
+      }
+    } catch (err) {
+      lookupStatus.classList.add('hidden');
+      lookupErrorMessage.textContent = 'Network error or server unreachable while looking up this task.';
+      lookupErrorBox.classList.remove('hidden');
+    } finally {
+      lookupBtn.disabled = false;
+      lookupBtn.textContent = 'Check Status';
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Top bar: auth modal (placeholder — no backend auth exists yet)
+  // ------------------------------------------------------------------
+  const authModal = document.getElementById('auth-modal');
+  const authModalTitle = document.getElementById('auth-modal-title');
+  const authModalClose = document.getElementById('auth-modal-close');
+
+  function openAuthModal(mode) {
+    authModalTitle.textContent = mode === 'register' ? 'Sign up' : 'Log in';
+    authModal.classList.remove('hidden');
+  }
+  function closeAuthModal() {
+    authModal.classList.add('hidden');
+  }
+
+  document.getElementById('login-btn')?.addEventListener('click', () => openAuthModal('login'));
+  document.getElementById('register-btn')?.addEventListener('click', () => openAuthModal('register'));
+  document.querySelector('.footer-login')?.addEventListener('click', () => openAuthModal('login'));
+  document.querySelector('.footer-register')?.addEventListener('click', () => openAuthModal('register'));
+  authModalClose?.addEventListener('click', closeAuthModal);
+  authModal?.addEventListener('click', (e) => { if (e.target === authModal) closeAuthModal(); });
+  document.querySelectorAll('.auth-modal-ok').forEach(btn => btn.addEventListener('click', closeAuthModal));
+
+  const footerYearEl = document.getElementById('footer-year');
+  if (footerYearEl) footerYearEl.textContent = String(new Date().getFullYear());
+
+  // ------------------------------------------------------------------
+  // Hero showcase carousel
+  // ------------------------------------------------------------------
+  const heroSlidesEl = document.getElementById('hero-slides');
+  const heroDotsEl = document.getElementById('hero-dots');
+  const heroPrevBtn = document.getElementById('hero-prev');
+  const heroNextBtn = document.getElementById('hero-next');
+  let heroSlideData = [];
+  let heroIndex = 0;
+  let heroTimer = null;
+
+  const HERO_FALLBACK_SLIDES = [
+    { title: 'Generate Cinematic Video', subtitle: 'Turn a prompt into motion with state-of-the-art video models.', image: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=1600&auto=format&fit=crop' },
+    { title: 'Create Stunning Imagery', subtitle: 'Photoreal or stylized art, generated in seconds.', image: 'https://images.unsplash.com/photo-1673187581959-68b124063f18?q=80&w=1600&auto=format&fit=crop' },
+    { title: 'Compose Original Music', subtitle: 'Produce full tracks from a simple text description.', image: 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?q=80&w=1600&auto=format&fit=crop' }
+  ];
+
+  function renderHeroSlides() {
+    const slides = heroSlideData.length > 0 ? heroSlideData : HERO_FALLBACK_SLIDES;
+    heroSlidesEl.innerHTML = '';
+    heroDotsEl.innerHTML = '';
+
+    slides.forEach((slide, index) => {
+      const panel = document.createElement('div');
+      panel.className = 'relative w-full shrink-0 aspect-[16/7] md:aspect-[16/6] bg-slate-900';
+      const isVideo = isVideoUrl(slide.image);
+      const mediaHtml = isVideo
+        ? `<video src="${slide.image}" class="absolute inset-0 w-full h-full object-cover" muted autoplay loop playsinline preload="metadata"></video>`
+        : `<img src="${slide.image}" alt="${escapeHtml(slide.title)}" class="absolute inset-0 w-full h-full object-cover" loading="${index === 0 ? 'eager' : 'lazy'}" referrerpolicy="no-referrer" />`;
+      panel.innerHTML = `
+        ${mediaHtml}
+        <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent"></div>
+        <div class="absolute inset-x-0 bottom-0 p-5 md:p-10 max-w-xl space-y-2">
+          <h3 class="text-xl md:text-3xl font-extrabold text-white drop-shadow">${escapeHtml(slide.title)}</h3>
+          <p class="text-slate-200/90 text-sm md:text-base line-clamp-2">${escapeHtml(slide.subtitle || '')}</p>
+          <button type="button" class="hero-cta mt-2 inline-flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-lg transition" data-slug="${escapeHtml(slide.slug || '')}">
+            Start Creating →
+          </button>
+        </div>
+      `;
+      panel.querySelector('.hero-cta').addEventListener('click', async () => {
+        if (!slide.slug) {
+          document.getElementById('browser-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
+
+        // The hero carousel's "trending" slides (and any MANUAL_HERO_SLIDES
+        // entries) aren't necessarily part of the Model Browser's currently
+        // loaded page(s) in `allModels` (paging only fetches a slice at a
+        // time), so a local-only lookup often missed and silently fell back
+        // to scrolling instead of opening the model. Fall back to the same
+        // direct-by-slug lookup used for deep links when it's not loaded yet.
+        const model = allModels.find(m => m.slug === slide.slug) || await fetchModelBySlug(slide.slug);
+
+        if (model) {
+          selectModel(model);
+        } else {
+          console.warn('Could not resolve hero slide model for "Start Creating":', slide.slug);
+          document.getElementById('browser-view')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+      heroSlidesEl.appendChild(panel);
+
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.setAttribute('aria-label', `Go to slide ${index + 1}`);
+      dot.className = `h-2 rounded-full transition-all ${index === heroIndex ? 'w-6 bg-white' : 'w-2 bg-white/40 hover:bg-white/70'}`;
+      dot.addEventListener('click', () => goToHeroSlide(index));
+      heroDotsEl.appendChild(dot);
+    });
+
+    updateHeroTransform();
+  }
+
+  function updateHeroTransform() {
+    heroSlidesEl.style.transform = `translateX(-${heroIndex * 100}%)`;
+    [...heroDotsEl.children].forEach((dot, i) => {
+      dot.className = `h-2 rounded-full transition-all ${i === heroIndex ? 'w-6 bg-white' : 'w-2 bg-white/40 hover:bg-white/70'}`;
+    });
+  }
+
+  function goToHeroSlide(index) {
+    const count = (heroSlideData.length > 0 ? heroSlideData : HERO_FALLBACK_SLIDES).length;
+    heroIndex = ((index % count) + count) % count;
+    updateHeroTransform();
+    restartHeroAutoplay();
+  }
+
+  function restartHeroAutoplay() {
+    clearInterval(heroTimer);
+    heroTimer = setInterval(() => goToHeroSlide(heroIndex + 1), 6000);
+  }
+
+  heroPrevBtn?.addEventListener('click', () => goToHeroSlide(heroIndex - 1));
+  heroNextBtn?.addEventListener('click', () => goToHeroSlide(heroIndex + 1));
+
+  // ------------------------------------------------------------------
+  // Popular AI Tools section — populated from live model data
+  // ------------------------------------------------------------------
+  const popularToolsGrid = document.getElementById('popular-tools-grid');
+
+  function renderPopularTools(models) {
+    if (!popularToolsGrid) return;
+    popularToolsGrid.innerHTML = '';
+
+    models.forEach(model => {
+      const { primary } = classifyCategories(model.categories);
+      const categoryLabel = formatCategoryLabel(primary || model.categories[0]);
+
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'group relative rounded-xl overflow-hidden border border-slate-800 bg-slate-900 aspect-[3/4] text-left focus:outline-none focus:ring-2 focus:ring-blue-500';
+
+      const imgHtml = model.image
+        ? (model.imageIsVideo
+            ? `<video src="${model.image}" class="absolute inset-0 w-full h-full object-cover transition duration-300 group-hover:scale-105" muted autoplay loop playsinline preload="metadata"></video>`
+            : `<img src="${model.image}" alt="${escapeHtml(model.title)}" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 w-full h-full object-cover transition duration-300 group-hover:scale-105" />`)
+        : `<div class="absolute inset-0 flex items-center justify-center text-slate-600 text-xs">No preview</div>`;
+
+      card.innerHTML = `
+        ${imgHtml}
+        <div class="absolute inset-0 bg-gradient-to-t from-slate-950/95 via-slate-950/10 to-transparent"></div>
+        <div class="absolute inset-x-0 bottom-0 p-3">
+          <p class="font-bold text-white text-sm truncate">${escapeHtml(model.title)}</p>
+          <p class="text-slate-300 text-xs">${escapeHtml(categoryLabel)}</p>
+        </div>
+      `;
+      card.addEventListener('click', () => selectModel(model));
+      popularToolsGrid.appendChild(card);
+    });
+  }
+
+  // Fetches a small, independent "trending" slice of the catalog (sorted by
+  // rating, across all categories) to power the Popular AI Tools grid, and
+  // (unless MANUAL_HERO_SLIDES overrides it below) the hero carousel too,
+  // regardless of whatever filter is currently active in the Model Browser
+  // below.
+  async function loadFeaturedModels() {
+    let heroIsManual = false;
+    let popularIsManual = false;
+
+    if (MANUAL_HERO_SLIDES.length > 0) {
+      try {
+        const manualSlides = await resolveManualHeroSlides();
+        if (manualSlides.length > 0) {
+          heroSlideData = manualSlides;
+          renderHeroSlides();
+          heroIsManual = true;
+        } else {
+          console.warn('MANUAL_HERO_SLIDES is set but none of its entries could be resolved; falling back to automatic hero selection.');
+        }
+      } catch (err) {
+        console.error('Could not resolve MANUAL_HERO_SLIDES, falling back to automatic hero selection:', err);
+      }
+    }
+
+    if (MANUAL_POPULAR_TOOLS.length > 0) {
+      try {
+        const manualTools = await resolveManualPopularTools();
+        if (manualTools.length > 0) {
+          renderPopularTools(manualTools);
+          popularIsManual = true;
+        } else {
+          console.warn('MANUAL_POPULAR_TOOLS is set but none of its entries could be resolved; falling back to automatic popular tools selection.');
+        }
+      } catch (err) {
+        console.error('Could not resolve MANUAL_POPULAR_TOOLS, falling back to automatic popular tools selection:', err);
+      }
+    }
+
+    try {
+      const url = new URL(RAILWAY_MODELS_URL);
+      url.searchParams.set('start', '0');
+      url.searchParams.set('limit', '10');
+      url.searchParams.set('sort', 'ratedusercount');
+
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Server returned status ${res.status}`);
+
+      const payload = await res.json();
+      const modelList = Array.isArray(payload) ? payload : (payload.data || []);
+      const normalized = modelList.map(normalizeModel).filter(m => m.image);
+
+      if (normalized.length === 0) throw new Error('No featured models with preview images');
+
+      if (!popularIsManual) renderPopularTools(normalized.slice(0, 5));
+
+      if (!heroIsManual) {
+        heroSlideData = normalized.slice(0, 5).map(m => {
+          const { primary } = classifyCategories(m.categories);
+          return {
+            title: m.title,
+            subtitle: m.description || `Try ${formatCategoryLabel(primary || m.categories[0])} with ${m.title}.`,
+            image: m.image,
+            slug: m.slug
+          };
+        });
+        renderHeroSlides();
+      }
+    } catch (err) {
+      console.error('Could not load featured models for Popular Tools / hero:', err);
+      if (!popularIsManual) renderPopularTools(FALLBACK_MODELS.map(normalizeModel));
+      if (!heroIsManual) renderHeroSlides(); // falls back to HERO_FALLBACK_SLIDES
+    } finally {
+      restartHeroAutoplay();
+    }
+  }
+
+  // Render the big-icon category nav immediately so it's visible even if
+  // the model fetch below is slow or fails (it doesn't depend on model
+  // data, only on the static BIG_ICON_CATEGORIES list).
+  renderCategoryFilters();
+
+  loadFeaturedModels();
+  loadModels();
+  </script>
+
+</body>
+</html>
