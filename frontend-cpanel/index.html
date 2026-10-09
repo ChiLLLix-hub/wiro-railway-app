@@ -460,8 +460,17 @@
   //         image: 'https://example.com/custom-hero-image.jpg'
   //       }
   const MANUAL_HERO_SLIDES = [
-    // 'google/nano-banana-2',
-    // 'bytedance/seedream-v4',
+    // Plain slug form - title/subtitle/image are looked up automatically
+    // from the live model data for "google/nano-banana-2".
+    'google/nano-banana-2',
+    // Fully hardcoded object form - title/subtitle are explicit here, while
+    // `image` is left out so it still falls back to the live model's own
+    // image (swap in a real hosted image URL instead to override it too).
+    {
+      slug: 'bytedance/seedream-v4',
+      title: 'SeeDream V4',
+      subtitle: 'High-fidelity text-to-image generation by ByteDance.'
+    }
   ];
 
   // Resolves MANUAL_HERO_SLIDES (slugs and/or hardcoded slide objects) into
