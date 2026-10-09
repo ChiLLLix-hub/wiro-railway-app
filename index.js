@@ -530,7 +530,13 @@ app.get('/models', async (req, res) => {
     const safeStart = Number.isFinite(requestedStart) && requestedStart >= 0 ? requestedStart : 0;
 
     const result = await client.searchModels({
-      search: search || undefined,
+      // When a tag is active, ask Wiro to actually search its whole catalog
+      // for that keyword (falling back to the tag itself when the user
+      // hasn't typed their own search term) - otherwise we'd only ever see
+      // whichever handful of unrelated, default-sorted models happen to
+      // land on this one page, making tag sections wildly undercount how
+      // many matching models actually exist.
+      search: (search || (requestedTag ? requestedTag : undefined)) || undefined,
       categories: categories ? String(categories).split(',') : undefined,
       slugowner: slugowner || undefined,
       sort: ALLOWED_SORTS.includes(requestedSort) ? requestedSort : 'relevance',
@@ -548,13 +554,15 @@ app.get('/models', async (req, res) => {
     // frontend, so blocked models are neither shown nor selectable - unless
     // a valid `tag` was requested, in which case only models actually
     // tagged with that keyword are shown (and only if they aren't *also*
-    // hard-banned by an unrelated slug/owner/category rule).
+    // hard-banned by an unrelated slug/owner/category rule). The keyword
+    // check also acts as a safety net against Wiro's fuzzy `search` match
+    // returning models that don't really carry the tag.
     const visibleTools = rawTools.filter(model => (
       requestedTag
         ? modelMatchesKeywordValue(model, requestedTag) && !isModelBlocked(model, { exceptKeyword: requestedTag })
         : !isModelBlocked(model)
     ));
-    const blockedCount = requestedTag ? 0 : rawTools.length - visibleTools.length;
+    const blockedCount = rawTools.length - visibleTools.length;
 
     const models = visibleTools.map(model => ({
       slug: `${model.cleanslugowner}/${model.cleanslugproject}`,
@@ -579,15 +587,13 @@ app.get('/models', async (req, res) => {
 
     return res.json({
       data: models,
-      // Best-effort: Wiro's `total` counts matches across every page, but we
-      // only know which models are blocked on the page we just fetched, so
-      // this slightly overcounts when blocked models exist on other pages.
-      // When filtering by `tag`, Wiro's `total` doesn't reflect the tag
-      // filter at all, so fall back to counting what's actually visible on
-      // this page instead of overstating the total.
-      total: requestedTag
-        ? models.length
-        : Math.max(0, (Number(result.total) || rawTools.length) - blockedCount),
+      // Best-effort: Wiro's `total` counts matches (across every page) for
+      // the `search`/`categories`/`slugowner` filters actually sent above -
+      // including the tag keyword we now pass as `search` when a tag is
+      // active - but we only know which models on *this* page are blocked
+      // or (for tag pages) false-positive keyword matches, so this slightly
+      // overcounts when such models exist on other pages too.
+      total: Math.max(0, (Number(result.total) || rawTools.length) - blockedCount),
       start: safeStart,
       limit: safeLimit,
       // Lets the frontend decide whether to show the "Uncensored"-style nav
