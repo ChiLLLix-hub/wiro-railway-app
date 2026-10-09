@@ -388,12 +388,33 @@ function getModelBlocklistFields(model) {
   return { owner, slug, categories, tags, text };
 }
 
+// True if this model's slug/categories/tags/description contain the given
+// (already-lowercased) keyword value - the same matching logic a plain
+// `keyword` MODEL_BLOCKLIST rule uses, factored out so it can be tested
+// independently of the full blocklist decision (e.g. "is this model tagged
+// 'uncensored'?" for the dedicated tag section below).
+function modelMatchesKeywordValue(model, keywordValue) {
+  const { slug, categories, tags, text } = getModelBlocklistFields(model);
+  return slug.includes(keywordValue)
+    || categories.some(c => c.includes(keywordValue))
+    || tags.some(t => t.includes(keywordValue))
+    || text.includes(keywordValue);
+}
+
 // True if any configured MODEL_BLOCKLIST rule matches this model - used to
 // both filter the public /models list and to reject direct schema/generate
 // requests for a model that isn't supposed to be reachable at all.
-function isModelBlocked(model) {
+//
+// `exceptKeyword` (already-lowercased) lets a caller ask "is this model
+// blocked for any reason *other than* this specific keyword rule?" - used by
+// the dedicated tag section (e.g. /models?tag=uncensored) so a model hidden
+// from the normal catalog only by a `uncensored` keyword rule can still be
+// reached there, while a model also hit by an unrelated slug/owner/category
+// rule stays hidden everywhere (hard bans still win).
+function isModelBlocked(model, { exceptKeyword } = {}) {
   if (MODEL_BLOCKLIST_RULES.length === 0) return false;
   const { owner, slug, categories, tags, text } = getModelBlocklistFields(model);
+  const exceptValue = exceptKeyword ? String(exceptKeyword).trim().toLowerCase() : null;
 
   return MODEL_BLOCKLIST_RULES.some(rule => {
     switch (rule.type) {
@@ -404,14 +425,33 @@ function isModelBlocked(model) {
       case 'category':
         return categories.includes(rule.value);
       case 'keyword':
-        return slug.includes(rule.value)
-          || categories.some(c => c.includes(rule.value))
-          || tags.some(t => t.includes(rule.value))
-          || text.includes(rule.value);
+        if (exceptValue && rule.value === exceptValue) return false;
+        return modelMatchesKeywordValue(model, rule.value);
       default:
         return false;
     }
   });
+}
+
+// The subset of MODEL_BLOCKLIST rules that are bare keywords (not
+// slug/owner/category) - these are the only ones a "tag page" like
+// /models?tag=uncensored is allowed to relax, since they're the only rule
+// type that represents a content label rather than a hard ban.
+function getConfiguredKeywordTags() {
+  return MODEL_BLOCKLIST_RULES.filter(rule => rule.type === 'keyword').map(rule => rule.value);
+}
+
+// Validates a client-supplied `tag` query/body param against the actually
+// configured keyword rules, so a request can't use this to bypass an
+// unrelated owner/slug/category ban by guessing arbitrary values. Returns
+// the normalized keyword to pass as `exceptKeyword`, or undefined if the tag
+// is missing/not a configured keyword (in which case the normal, full
+// blocklist check applies).
+function resolveExceptKeywordFromTag(rawTag) {
+  if (!rawTag) return undefined;
+  const normalized = String(rawTag).trim().toLowerCase();
+  if (!normalized) return undefined;
+  return getConfiguredKeywordTags().includes(normalized) ? normalized : undefined;
 }
 
 // Fast-path block check for a bare "owner/project" slug (e.g. from
@@ -419,7 +459,7 @@ function isModelBlocked(model) {
 // rules can be checked without any extra Wiro call; category/keyword rules
 // need the model's real metadata, so those only trigger a /Tool/Detail
 // lookup when such a rule is actually configured.
-async function isModelSlugBlocked(modelSlug) {
+async function isModelSlugBlocked(modelSlug, { exceptKeyword } = {}) {
   const [owner = '', project = ''] = String(modelSlug || '').toLowerCase().split('/');
   const slug = owner && project ? `${owner}/${project}` : '';
 
@@ -429,12 +469,15 @@ async function isModelSlugBlocked(modelSlug) {
   ));
   if (matchesSlugRule) return true;
 
-  const needsMetadataLookup = MODEL_BLOCKLIST_RULES.some(rule => rule.type === 'category' || rule.type === 'keyword');
+  const exceptValue = exceptKeyword ? String(exceptKeyword).trim().toLowerCase() : null;
+  const needsMetadataLookup = MODEL_BLOCKLIST_RULES.some(rule => (
+    rule.type === 'category' || (rule.type === 'keyword' && rule.value !== exceptValue)
+  ));
   if (!needsMetadataLookup) return false;
 
   try {
     const tool = await resolveModelDetail(modelSlug);
-    return tool ? isModelBlocked(tool) : false;
+    return tool ? isModelBlocked(tool, { exceptKeyword }) : false;
   } catch {
     // Don't block generation just because the lookup to verify the
     // blocklist failed - fail open rather than breaking every generation.
@@ -461,8 +504,22 @@ app.get('/models', async (req, res) => {
   const ALLOWED_SORTS = ['relevance', 'time', 'ratedusercount', 'commentcount', 'averagepoint'];
 
   try {
-    const { search, categories, slugowner, sort, start, limit } = req.query;
+    const { search, categories, slugowner, sort, start, limit, tag } = req.query;
     const requestedSort = String(sort || '').trim();
+
+    // A `tag` query param reaches a dedicated, otherwise-hidden section of
+    // the catalog (e.g. /models?tag=uncensored) - it must match one of the
+    // actual `keyword` rules currently configured in MODEL_BLOCKLIST, so
+    // this can't be used to bypass an arbitrary owner/slug/category ban by
+    // guessing values.
+    let requestedTag = null;
+    if (tag !== undefined && String(tag).trim() !== '') {
+      const normalizedTag = String(tag).trim().toLowerCase();
+      if (!getConfiguredKeywordTags().includes(normalizedTag)) {
+        return res.status(400).json({ error: `Unknown tag "${tag}". It isn't a configured MODEL_BLOCKLIST keyword.` });
+      }
+      requestedTag = normalizedTag;
+    }
 
     // Cap the page size so a client-supplied `limit` can't force us to pull
     // (and re-serve) the entire 500+ model catalog in one response - the
@@ -488,9 +545,16 @@ app.get('/models', async (req, res) => {
 
     const rawTools = result.tool || [];
     // Drop anything matched by MODEL_BLOCKLIST before it ever reaches the
-    // frontend, so blocked models are neither shown nor selectable.
-    const visibleTools = rawTools.filter(model => !isModelBlocked(model));
-    const blockedCount = rawTools.length - visibleTools.length;
+    // frontend, so blocked models are neither shown nor selectable - unless
+    // a valid `tag` was requested, in which case only models actually
+    // tagged with that keyword are shown (and only if they aren't *also*
+    // hard-banned by an unrelated slug/owner/category rule).
+    const visibleTools = rawTools.filter(model => (
+      requestedTag
+        ? modelMatchesKeywordValue(model, requestedTag) && !isModelBlocked(model, { exceptKeyword: requestedTag })
+        : !isModelBlocked(model)
+    ));
+    const blockedCount = requestedTag ? 0 : rawTools.length - visibleTools.length;
 
     const models = visibleTools.map(model => ({
       slug: `${model.cleanslugowner}/${model.cleanslugproject}`,
@@ -518,9 +582,18 @@ app.get('/models', async (req, res) => {
       // Best-effort: Wiro's `total` counts matches across every page, but we
       // only know which models are blocked on the page we just fetched, so
       // this slightly overcounts when blocked models exist on other pages.
-      total: Math.max(0, (Number(result.total) || rawTools.length) - blockedCount),
+      // When filtering by `tag`, Wiro's `total` doesn't reflect the tag
+      // filter at all, so fall back to counting what's actually visible on
+      // this page instead of overstating the total.
+      total: requestedTag
+        ? models.length
+        : Math.max(0, (Number(result.total) || rawTools.length) - blockedCount),
       start: safeStart,
-      limit: safeLimit
+      limit: safeLimit,
+      // Lets the frontend decide whether to show the "Uncensored"-style nav
+      // link at all - apps that never set MODEL_BLOCKLIST to a keyword have
+      // no tag pages to link to.
+      availableTags: getConfiguredKeywordTags()
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -768,7 +841,7 @@ app.get('/models/schema', async (req, res) => {
   res.set('Surrogate-Control', 'no-store');
 
   try {
-    const { model, params } = req.query;
+    const { model, params, tag } = req.query;
 
     if (!model) {
       return res.status(400).json({ error: 'Query parameter "model" is required (e.g. ?model=owner/project).' });
@@ -783,8 +856,13 @@ app.get('/models/schema', async (req, res) => {
     while (requestedModel.endsWith('/')) requestedModel = requestedModel.slice(0, -1);
 
     const tool = await resolveModelDetail(requestedModel);
+    // `tag` lets a model reached from a dedicated tag section (e.g.
+    // /models?tag=uncensored) open its schema even though it'd otherwise be
+    // 404'd by MODEL_BLOCKLIST - only honored when it matches an actually
+    // configured keyword rule.
+    const exceptKeyword = resolveExceptKeywordFromTag(tag);
 
-    if (!tool || isModelBlocked(tool)) {
+    if (!tool || isModelBlocked(tool, { exceptKeyword })) {
       return res.status(404).json({ error: `Model "${requestedModel}" was not found.` });
     }
 
@@ -857,7 +935,7 @@ app.get('/models/estimate-cost', async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
   try {
-    const { model, params } = req.query;
+    const { model, params, tag } = req.query;
 
     if (!model) {
       return res.status(400).json({ error: 'Query parameter "model" is required (e.g. ?model=owner/project).' });
@@ -868,8 +946,9 @@ app.get('/models/estimate-cost', async (req, res) => {
     while (requestedModel.endsWith('/')) requestedModel = requestedModel.slice(0, -1);
 
     const tool = await resolveModelDetail(requestedModel);
+    const exceptKeyword = resolveExceptKeywordFromTag(tag);
 
-    if (!tool || isModelBlocked(tool)) {
+    if (!tool || isModelBlocked(tool, { exceptKeyword })) {
       return res.status(404).json({ error: `Model "${requestedModel}" was not found.` });
     }
 
@@ -949,14 +1028,21 @@ app.post('/api/upload', upload.single('file'), handleReferenceUpload);
 // Dynamic Model Execution Endpoint
 app.post('/generate', async (req, res) => {
   try {
-    const { model, prompt, ...rest } = req.body || {};
+    const { model, prompt, tag, ...rest } = req.body || {};
 
     const selectedModel = model || 'alibaba/wan-2-7-image';
+
+    // `tag` lets a model reached from a dedicated tag section (e.g. the
+    // frontend's "Uncensored" nav entry) actually run, even though it'd
+    // otherwise be blocked by MODEL_BLOCKLIST - only honored when it
+    // matches an actually configured keyword rule, and destructured out of
+    // `rest` above so it's never forwarded to Wiro as a model parameter.
+    const exceptKeyword = resolveExceptKeywordFromTag(tag);
 
     // Enforce MODEL_BLOCKLIST here too - not just in GET /models - so a
     // blocked model can't be run by calling this endpoint directly with its
     // slug, bypassing the fact that the frontend never lists/offers it.
-    if (await isModelSlugBlocked(selectedModel)) {
+    if (await isModelSlugBlocked(selectedModel, { exceptKeyword })) {
       return res.status(403).json({ success: false, error: `Model "${selectedModel}" is not available.` });
     }
 
