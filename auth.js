@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { randomBytes } from 'node:crypto';
 import { pool, isDbConfigured } from './db.js';
 
 // Falls back to a random per-process secret when JWT_SECRET isn't set so
@@ -12,7 +13,9 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 function randomFallbackSecret() {
   console.warn('JWT_SECRET is not set - using a random, process-local secret. Set JWT_SECRET in your environment for stable sessions across restarts.');
-  return [...Array(32)].map(() => Math.random().toString(36)[2]).join('');
+  // Use a CSPRNG (crypto.randomBytes), not Math.random(), since this value
+  // is used to sign authentication tokens.
+  return randomBytes(48).toString('hex');
 }
 
 const BCRYPT_ROUNDS = 10;

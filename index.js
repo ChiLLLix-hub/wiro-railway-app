@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import rateLimit from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
@@ -24,6 +25,27 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// Rate limiting: these routes perform authentication/authorization and/or
+// database access against user accounts, so without a limit they'd be open
+// to brute-force credential guessing and request-flooding. A tighter
+// window is used for login/register (the most brute-forceable endpoints);
+// a looser shared limit covers the rest of the authenticated API surface.
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many attempts. Please try again later.' }
+});
+
+const apiRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many requests. Please slow down.' }
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -1039,9 +1061,24 @@ app.post('/api/upload', upload.single('file'), handleReferenceUpload);
 // taskId could read another user's prompt and output (see /task/:taskId
 // below). These endpoints establish that identity in Postgres.
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Deliberately not a regex (CodeQL flagged a regex-based check here as a
+// potential ReDoS vector on user-controlled input) - a plain structural
+// check is both simpler and immune to catastrophic backtracking.
+function isValidEmail(value) {
+  const email = String(value || '').trim();
+  if (email.length < 3 || email.length > 254) return false;
+  const atIndex = email.indexOf('@');
+  if (atIndex <= 0 || atIndex !== email.lastIndexOf('@')) return false;
+  const localPart = email.slice(0, atIndex);
+  const domainPart = email.slice(atIndex + 1);
+  if (!localPart || !domainPart) return false;
+  if (/\s/.test(email)) return false;
+  const dotIndex = domainPart.lastIndexOf('.');
+  if (dotIndex <= 0 || dotIndex === domainPart.length - 1) return false;
+  return true;
+}
 
-app.post('/auth/register', async (req, res) => {
+app.post('/auth/register', authRateLimiter, async (req, res) => {
   if (!isDbConfigured()) {
     return res.status(503).json({ success: false, error: 'Accounts are not configured on this server (DATABASE_URL missing).' });
   }
@@ -1049,7 +1086,7 @@ app.post('/auth/register', async (req, res) => {
   try {
     const { email, password, displayName } = req.body || {};
 
-    if (!email || !EMAIL_RE.test(String(email).trim())) {
+    if (!email || !isValidEmail(email)) {
       return res.status(400).json({ success: false, error: 'A valid email is required.' });
     }
     if (!password || String(password).length < 8) {
@@ -1076,7 +1113,7 @@ app.post('/auth/register', async (req, res) => {
   }
 });
 
-app.post('/auth/login', async (req, res) => {
+app.post('/auth/login', authRateLimiter, async (req, res) => {
   if (!isDbConfigured()) {
     return res.status(503).json({ success: false, error: 'Accounts are not configured on this server (DATABASE_URL missing).' });
   }
@@ -1106,7 +1143,7 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
-app.get('/me', requireAuth, async (req, res) => {
+app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const user = await findUserById(req.user.id);
     if (!user) {
@@ -1123,7 +1160,7 @@ app.get('/me', requireAuth, async (req, res) => {
 
 // A user's own generation history, so they never need to rely on
 // remembering/sharing a raw Wiro taskId to revisit past jobs.
-app.get('/me/generations', requireAuth, async (req, res) => {
+app.get('/me/generations', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT id, wiro_task_id, model_slug, prompt, status, total_cost, outputs, created_at, completed_at
@@ -1138,7 +1175,7 @@ app.get('/me/generations', requireAuth, async (req, res) => {
 
 // Admin-only: list all accounts, so support/ops can review or promote users
 // without direct DB access.
-app.get('/admin/users', requireAuth, requireAdmin, async (req, res) => {
+app.get('/admin/users', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT id, email, role, display_name, is_active, created_at FROM users ORDER BY created_at DESC LIMIT 500`
@@ -1149,7 +1186,7 @@ app.get('/admin/users', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/admin/users/:id/role', requireAuth, requireAdmin, async (req, res) => {
+app.patch('/admin/users/:id/role', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
   try {
     const { role } = req.body || {};
     if (role !== 'user' && role !== 'admin') {
@@ -1169,7 +1206,7 @@ app.patch('/admin/users/:id/role', requireAuth, requireAdmin, async (req, res) =
 });
 
 // Dynamic Model Execution Endpoint
-app.post('/generate', requireAuth, async (req, res) => {
+app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const { model, prompt, tag, ...rest } = req.body || {};
 
@@ -1297,7 +1334,7 @@ function isTaskPending(task) {
 // locally (via the `generations` table written by POST /generate) *before*
 // ever calling Wiro, so one user can never fetch another user's job by
 // guessing/sharing a taskId.
-app.get('/task/:taskId', requireAuth, async (req, res) => {
+app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
   try {
