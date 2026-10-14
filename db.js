@@ -50,6 +50,14 @@ export async function initSchema() {
   // databases.
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS credits NUMERIC NOT NULL DEFAULT 0;`);
 
+  // Admin dashboard needs: when a user last signed in, and a way to
+  // permanently deny a specific email from ever logging in again
+  // ("blacklist", distinct from `is_active` which an admin can freely
+  // toggle back on - blacklisting records why, for audit purposes).
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blacklisted BOOLEAN NOT NULL DEFAULT FALSE;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blacklist_reason TEXT;`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS generations (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -74,6 +82,45 @@ export async function initSchema() {
 
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS generations_wiro_task_id_idx ON generations (wiro_task_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS generations_user_id_idx ON generations (user_id);`);
+
+  // Records every admin-initiated credit change (manual add/remove with a
+  // reason) and every demo top-up, so the admin dashboard can show a real
+  // transaction history instead of only the current balance. Deliberately
+  // does NOT log every hold/charge/refund from the generation flow itself
+  // (that detail already lives on `generations` via held_amount/total_cost)
+  // - this table is specifically the "someone changed a balance outside of
+  // a generation" audit trail.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS credit_transactions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount NUMERIC NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('admin_adjust', 'topup_demo')),
+      reason TEXT,
+      created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS credit_transactions_user_id_idx ON credit_transactions (user_id);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS credit_transactions_created_at_idx ON credit_transactions (created_at);`);
+
+  // Every login attempt (success or failure) against an email, for the
+  // admin dashboard's "unsuccessful login attempts" view - keyed on the
+  // submitted email rather than user_id since a failed attempt may target
+  // an email with no matching account at all.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS login_attempts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      email TEXT NOT NULL,
+      success BOOLEAN NOT NULL,
+      reason TEXT,
+      ip TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS login_attempts_created_at_idx ON login_attempts (created_at);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS login_attempts_email_idx ON login_attempts (email);`);
 
   // gen_random_uuid() lives in pgcrypto on older Postgres - make sure it's
   // available before the CREATE TABLEs above run.

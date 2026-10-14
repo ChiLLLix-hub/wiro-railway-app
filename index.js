@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
-import { hashPassword, verifyPassword, issueToken, requireAuth, requireAdmin, findUserByEmail, findUserById, createUser } from './auth.js';
+import { hashPassword, verifyPassword, issueToken, requireAuth, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt, markUserLoggedIn } from './auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1155,6 +1155,17 @@ async function chargeAdditionalCredits(userId, amount) {
   );
 }
 
+// Records an entry in the credit_transactions audit trail. Only used for
+// out-of-band balance changes (admin adjustments, demo top-ups) - not for
+// the per-generation hold/charge/refund flow, which is already tracked on
+// generations.held_amount/total_cost.
+async function recordCreditTransaction({ userId, amount, type, reason, createdBy }) {
+  await pool.query(
+    `INSERT INTO credit_transactions (user_id, amount, type, reason, created_by) VALUES ($1, $2, $3, $4, $5)`,
+    [userId, amount, type, reason || null, createdBy || null]
+  );
+}
+
 app.post('/auth/register', authRateLimiter, async (req, res) => {
   if (!isDbConfigured()) {
     return res.status(503).json({ success: false, error: 'Accounts are not configured on this server (DATABASE_URL missing).' });
@@ -1195,19 +1206,38 @@ app.post('/auth/login', authRateLimiter, async (req, res) => {
     return res.status(503).json({ success: false, error: 'Accounts are not configured on this server (DATABASE_URL missing).' });
   }
 
+  const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
+  const ip = req.ip;
+  const userAgent = req.headers['user-agent'] || null;
+
   try {
     const { email, password } = req.body || {};
     if (!email || !password) {
+      await recordLoginAttempt({ email: normalizedEmail, success: false, reason: 'missing_credentials', ip, userAgent });
       return res.status(400).json({ success: false, error: 'Email and password are required.' });
     }
 
-    const user = await findUserByEmail(String(email).trim().toLowerCase());
+    const user = await findUserByEmail(normalizedEmail);
+
+    // A blacklisted email is rejected before anything else - this is a
+    // permanent-until-an-admin-lifts-it denial (distinct from `is_active`,
+    // which an admin can freely re-enable), so it must never be bypassed
+    // by the generic "invalid email or password" branch below.
+    if (user?.blacklisted) {
+      await recordLoginAttempt({ email: normalizedEmail, success: false, reason: 'blacklisted', ip, userAgent });
+      return res.status(403).json({ success: false, error: 'This account has been blocked. Please contact support.' });
+    }
+
     // Use the same generic error for "no such user" and "wrong password" so
     // a login attempt can't be used to enumerate which emails are
     // registered.
     if (!user || !user.is_active || !(await verifyPassword(String(password), user.password_hash))) {
+      await recordLoginAttempt({ email: normalizedEmail, success: false, reason: !user ? 'no_such_user' : (!user.is_active ? 'inactive' : 'bad_password'), ip, userAgent });
       return res.status(401).json({ success: false, error: 'Invalid email or password.' });
     }
+
+    await recordLoginAttempt({ email: normalizedEmail, success: true, ip, userAgent });
+    await markUserLoggedIn(user.id);
 
     const token = issueToken(user);
     return res.json({
@@ -1228,7 +1258,53 @@ app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
     }
     return res.json({
       success: true,
-      user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name, credits: toCreditsNumber(user.credits) }
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        displayName: user.display_name,
+        credits: toCreditsNumber(user.credits),
+        lastLoginAt: user.last_login_at
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Powers the user dashboard's overview cards: last login, current credit
+// balance, how much has been spent today/this week/this month (derived
+// from completed generations' real total_cost - not the in-flight hold
+// amount), and the total number of generations run.
+app.get('/me/summary', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    const user = await findUserById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    const { rows: spendRows } = await pool.query(
+      `SELECT
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('day', now())), 0) AS today,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('week', now())), 0) AS this_week,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('month', now())), 0) AS this_month,
+         COUNT(*) AS total_generations
+       FROM generations
+       WHERE user_id = $1 AND status = 'completed'`,
+      [req.user.id]
+    );
+    const spend = spendRows[0] || {};
+
+    return res.json({
+      success: true,
+      summary: {
+        credits: toCreditsNumber(user.credits),
+        lastLoginAt: user.last_login_at,
+        spendToday: toCreditsNumber(spend.today),
+        spendThisWeek: toCreditsNumber(spend.this_week),
+        spendThisMonth: toCreditsNumber(spend.this_month),
+        totalGenerations: Number(spend.total_generations) || 0
+      }
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -1259,6 +1335,8 @@ app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found.' });
     }
 
+    await recordCreditTransaction({ userId: req.user.id, amount, type: 'topup_demo', reason: `Demo top-up: ${packageId} package` });
+
     return res.json({ success: true, credits: toCreditsNumber(rows[0].credits), added: amount });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -1270,7 +1348,7 @@ app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
 app.get('/me/generations', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, wiro_task_id, model_slug, prompt, status, total_cost, outputs, created_at, completed_at
+      `SELECT id, wiro_task_id, model_slug, prompt, status, total_cost, held_amount, outputs, created_at, completed_at
        FROM generations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
       [req.user.id]
     );
@@ -1280,14 +1358,31 @@ app.get('/me/generations', apiRateLimiter, requireAuth, async (req, res) => {
   }
 });
 
+// ==================== ADMIN DASHBOARD ====================
+
 // Admin-only: list all accounts, so support/ops can review or promote users
-// without direct DB access.
+// without direct DB access. `search` matches email or display name
+// (case-insensitive, partial match) so an admin can find a specific user
+// without paging through the full list.
 app.get('/admin/users', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
   try {
+    const search = String(req.query.search || '').trim();
+    const params = [];
+    let where = '';
+    if (search) {
+      params.push(`%${search.toLowerCase()}%`);
+      where = `WHERE lower(email) LIKE $1 OR lower(COALESCE(display_name, '')) LIKE $1`;
+    }
+
     const { rows } = await pool.query(
-      `SELECT id, email, role, display_name, is_active, created_at FROM users ORDER BY created_at DESC LIMIT 500`
+      `SELECT id, email, role, display_name, is_active, blacklisted, blacklist_reason, credits, last_login_at, created_at
+       FROM users ${where} ORDER BY created_at DESC LIMIT 500`,
+      params
     );
-    return res.json({ success: true, users: rows });
+    return res.json({
+      success: true,
+      users: rows.map(u => ({ ...u, credits: toCreditsNumber(u.credits) }))
+    });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -1307,6 +1402,220 @@ app.patch('/admin/users/:id/role', apiRateLimiter, requireAuth, requireAdmin, as
       return res.status(404).json({ success: false, error: 'User not found.' });
     }
     return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: directly add or remove a user's credits, always requiring a
+// reason so the resulting entry in `credit_transactions` is meaningful for
+// later auditing (e.g. "refund for bug", "manual promo credit").
+app.post('/admin/users/:id/credits', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const amount = Number(req.body?.amount);
+    const reason = String(req.body?.reason || '').trim();
+    if (!Number.isFinite(amount) || amount === 0) {
+      return res.status(400).json({ success: false, error: 'A non-zero numeric amount is required (positive to add, negative to remove).' });
+    }
+    if (!reason) {
+      return res.status(400).json({ success: false, error: 'A reason is required for every manual credit adjustment.' });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE users SET credits = credits + $1, updated_at = now() WHERE id = $2 RETURNING id, email, credits`,
+      [amount, req.params.id]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    await recordCreditTransaction({ userId: req.params.id, amount, type: 'admin_adjust', reason, createdBy: req.user.id });
+
+    return res.json({ success: true, user: { ...rows[0], credits: toCreditsNumber(rows[0].credits) } });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: block/unblock toggles `is_active` - a blocked user keeps
+// their account and data but can no longer log in (enforced in
+// POST /auth/login). Distinct from blacklisting below, which is a
+// stronger, reason-tracked, email-level denial.
+app.post('/admin/users/:id/block', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET is_active = FALSE, updated_at = now() WHERE id = $1 RETURNING id, email, is_active`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
+    return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/admin/users/:id/unblock', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET is_active = TRUE, updated_at = now() WHERE id = $1 RETURNING id, email, is_active`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
+    return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: blacklist/unblacklist by user id, recording why - a
+// blacklisted account is rejected at login (see POST /auth/login) with a
+// generic "blocked" message regardless of password correctness.
+app.post('/admin/users/:id/blacklist', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) {
+      return res.status(400).json({ success: false, error: 'A reason is required to blacklist a user.' });
+    }
+    const { rows } = await pool.query(
+      `UPDATE users SET blacklisted = TRUE, blacklist_reason = $1, updated_at = now() WHERE id = $2 RETURNING id, email, blacklisted, blacklist_reason`,
+      [reason, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
+    return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/admin/users/:id/unblacklist', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET blacklisted = FALSE, blacklist_reason = NULL, updated_at = now() WHERE id = $1 RETURNING id, email, blacklisted`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
+    return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: generations across every user (not just the caller's own),
+// so support/ops can look up a specific user's outputs without needing
+// direct DB access. Optional `search` matches email, model slug or prompt.
+app.get('/admin/generations', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const search = String(req.query.search || '').trim();
+    const params = [];
+    let where = '';
+    if (search) {
+      params.push(`%${search.toLowerCase()}%`);
+      where = `WHERE lower(u.email) LIKE $1 OR lower(COALESCE(g.model_slug, '')) LIKE $1 OR lower(COALESCE(g.prompt, '')) LIKE $1`;
+    }
+
+    const { rows } = await pool.query(
+      `SELECT g.id, g.wiro_task_id, g.model_slug, g.prompt, g.status, g.total_cost, g.held_amount,
+              g.outputs, g.created_at, g.completed_at, u.id AS user_id, u.email AS user_email
+       FROM generations g
+       JOIN users u ON u.id = g.user_id
+       ${where}
+       ORDER BY g.created_at DESC
+       LIMIT 500`,
+      params
+    );
+    return res.json({ success: true, generations: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: the manual-adjustment / demo-topup audit trail (see
+// credit_transactions table) - "view last transaction" in the admin
+// dashboard.
+app.get('/admin/transactions', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.id, t.amount, t.type, t.reason, t.created_at,
+              u.id AS user_id, u.email AS user_email,
+              admin.id AS created_by_id, admin.email AS created_by_email
+       FROM credit_transactions t
+       JOIN users u ON u.id = t.user_id
+       LEFT JOIN users admin ON admin.id = t.created_by
+       ORDER BY t.created_at DESC
+       LIMIT 200`
+    );
+    return res.json({ success: true, transactions: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: aggregate stats for the dashboard's overview cards - credits
+// actually paid/charged (completed generations' total_cost) today/this
+// week/this month, plus headline counts.
+app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows: revenueRows } = await pool.query(
+      `SELECT
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('day', now())), 0) AS today,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('week', now())), 0) AS this_week,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('month', now())), 0) AS this_month
+       FROM generations
+       WHERE status = 'completed'`
+    );
+    const { rows: countRows } = await pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM users) AS total_users,
+         (SELECT COUNT(*) FROM users WHERE is_active AND NOT blacklisted) AS active_users,
+         (SELECT COUNT(*) FROM users WHERE blacklisted) AS blacklisted_users,
+         (SELECT COUNT(*) FROM generations) AS total_generations,
+         (SELECT COUNT(*) FROM generations WHERE status = 'pending') AS pending_generations,
+         (SELECT COUNT(*) FROM generations WHERE status = 'failed') AS failed_generations`
+    );
+    const { rows: loginRows } = await pool.query(
+      `SELECT COUNT(*) AS failed_logins_today
+       FROM login_attempts
+       WHERE NOT success AND created_at >= date_trunc('day', now())`
+    );
+
+    const revenue = revenueRows[0] || {};
+    const counts = countRows[0] || {};
+    const logins = loginRows[0] || {};
+
+    return res.json({
+      success: true,
+      stats: {
+        revenueToday: toCreditsNumber(revenue.today),
+        revenueThisWeek: toCreditsNumber(revenue.this_week),
+        revenueThisMonth: toCreditsNumber(revenue.this_month),
+        totalUsers: Number(counts.total_users) || 0,
+        activeUsers: Number(counts.active_users) || 0,
+        blacklistedUsers: Number(counts.blacklisted_users) || 0,
+        totalGenerations: Number(counts.total_generations) || 0,
+        pendingGenerations: Number(counts.pending_generations) || 0,
+        failedGenerations: Number(counts.failed_generations) || 0,
+        failedLoginsToday: Number(logins.failed_logins_today) || 0
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: recent login attempts (success and failure) - optional
+// `failedOnly=true` filters to just unsuccessful attempts, for spotting
+// brute-force / credential-stuffing activity.
+app.get('/admin/login-attempts', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const failedOnly = String(req.query.failedOnly || '').toLowerCase() === 'true';
+    const { rows } = await pool.query(
+      `SELECT id, email, success, reason, ip, user_agent, created_at
+       FROM login_attempts
+       ${failedOnly ? 'WHERE NOT success' : ''}
+       ORDER BY created_at DESC
+       LIMIT 200`
+    );
+    return res.json({ success: true, attempts: rows });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }

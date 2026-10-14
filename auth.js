@@ -98,3 +98,24 @@ export async function createUser({ email, passwordHash, role = 'user', displayNa
   );
   return rows[0];
 }
+
+// Records every login attempt (success or failure) against the submitted
+// email - used by the admin dashboard's login-attempts view. Keyed on the
+// raw email (not user_id) so attempts against an unregistered/mistyped
+// email are still visible, and failures are never silently dropped just
+// because this insert itself fails.
+export async function recordLoginAttempt({ email, success, reason = null, ip = null, userAgent = null }) {
+  try {
+    await pool.query(
+      `INSERT INTO login_attempts (email, success, reason, ip, user_agent)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [String(email || '').toLowerCase(), success, reason, ip, userAgent]
+    );
+  } catch (error) {
+    console.error('Failed to record login attempt:', error);
+  }
+}
+
+export async function markUserLoggedIn(userId) {
+  await pool.query(`UPDATE users SET last_login_at = now() WHERE id = $1`, [userId]);
+}
