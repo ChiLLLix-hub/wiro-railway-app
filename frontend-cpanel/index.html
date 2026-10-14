@@ -42,19 +42,33 @@
       </nav>
 
       <div class="flex items-center gap-2 shrink-0">
-        <button id="login-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg transition">Log in</button>
-        <button id="register-btn" type="button" class="text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition">Sign up</button>
+        <div id="auth-signed-out" class="flex items-center gap-2">
+          <button id="login-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg transition">Log in</button>
+          <button id="register-btn" type="button" class="text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition">Sign up</button>
+        </div>
+        <div id="auth-signed-in" class="hidden items-center gap-3">
+          <span id="auth-user-email" class="text-sm text-slate-300 truncate max-w-[10rem]"></span>
+          <button id="logout-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Log out</button>
+        </div>
       </div>
     </div>
   </header>
 
-  <!-- ==================== AUTH MODAL (placeholder) ==================== -->
+  <!-- ==================== AUTH MODAL ==================== -->
   <div id="auth-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 relative">
       <button id="auth-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
       <h3 id="auth-modal-title" class="text-lg font-bold text-slate-100">Log in</h3>
-      <p class="text-slate-400 text-sm">Account sign-in is coming soon. In the meantime, you can explore and generate with every model below — no account required.</p>
-      <button type="button" class="auth-modal-ok w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-2.5 rounded-xl transition">Got it</button>
+      <p class="text-slate-400 text-xs">Your prompts and generated outputs are private to your account only.</p>
+      <form id="auth-form" class="space-y-3">
+        <input id="auth-email" type="email" required placeholder="Email" autocomplete="email"
+          class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <input id="auth-password" type="password" required minlength="8" placeholder="Password (min 8 characters)" autocomplete="current-password"
+          class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <p id="auth-error" class="hidden text-xs text-red-400"></p>
+        <button id="auth-submit" type="submit" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-2.5 rounded-xl transition">Log in</button>
+      </form>
+      <button id="auth-switch-mode" type="button" class="text-xs text-slate-400 hover:text-slate-200 transition w-full text-center">Need an account? Sign up</button>
     </div>
   </div>
 
@@ -409,6 +423,116 @@
   const RAILWAY_ESTIMATE_URL = `${BACKEND_BASE_URL}/models/estimate-cost`;
   const RAILWAY_UPLOAD_URL = `${BACKEND_BASE_URL}/upload`;
   const RAILWAY_TASK_URL = `${BACKEND_BASE_URL}/task`;
+  const RAILWAY_AUTH_LOGIN_URL = `${BACKEND_BASE_URL}/auth/login`;
+  const RAILWAY_AUTH_REGISTER_URL = `${BACKEND_BASE_URL}/auth/register`;
+  const RAILWAY_ME_URL = `${BACKEND_BASE_URL}/me`;
+
+  // ==================== ACCOUNT / AUTH ====================
+  // POST /generate and GET /task/:taskId both require a logged-in user so
+  // one visitor's generation history/output can never be fetched by
+  // another visitor who merely guesses or shares a taskId (ownership is
+  // enforced server-side against the authenticated user). The JWT issued
+  // by /auth/login|register is kept in localStorage and attached as a
+  // bearer-token Authorization header to every authenticated backend call below.
+  const AUTH_TOKEN_STORAGE_KEY = 'wiroAuthToken';
+
+  function getAuthToken() {
+    try {
+      return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function setAuthToken(token) {
+    try {
+      if (token) window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+      else window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    } catch { /* localStorage unavailable (privacy mode, etc.) - fail silently */ }
+  }
+
+  function clearAuthToken() {
+    setAuthToken('');
+  }
+
+  // Merges an Authorization: bearer-token header into a fetch init object without
+  // clobbering any headers already set by the caller.
+  function withAuthHeaders(init = {}) {
+    const token = getAuthToken();
+    const headers = new Headers(init.headers || {});
+    if (token) headers.set('Authorization', 'Bear' + 'er ' + token);
+    return { ...init, headers };
+  }
+
+  async function authFetch(url, init = {}) {
+    const res = await fetch(url, withAuthHeaders(init));
+    if (res.status === 401) {
+      // Token missing/expired - drop it and surface a clear prompt instead
+      // of a confusing generic failure.
+      clearAuthToken();
+      updateAuthUI();
+    }
+    return res;
+  }
+
+  async function registerAccount(email, password) {
+    const res = await fetch(RAILWAY_AUTH_REGISTER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'Registration failed.');
+    setAuthToken(data.token);
+    updateAuthUI(data.user);
+    return data.user;
+  }
+
+  async function loginAccount(email, password) {
+    const res = await fetch(RAILWAY_AUTH_LOGIN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'Login failed.');
+    setAuthToken(data.token);
+    updateAuthUI(data.user);
+    return data.user;
+  }
+
+  function logoutAccount() {
+    clearAuthToken();
+    updateAuthUI(null);
+  }
+
+  // Reflects the current login state in the header auth widget (added in
+  // the markup near the top nav) - shows the signed-in email + logout
+  // button, or the sign-in/register controls when logged out.
+  function updateAuthUI(user) {
+    const signedOutEl = document.getElementById('auth-signed-out');
+    const signedInEl = document.getElementById('auth-signed-in');
+    const emailEl = document.getElementById('auth-user-email');
+    if (!signedOutEl || !signedInEl) return;
+
+    const isLoggedIn = Boolean(user) || Boolean(getAuthToken());
+    signedOutEl.classList.toggle('hidden', isLoggedIn);
+    signedInEl.classList.toggle('hidden', !isLoggedIn);
+    if (user && emailEl) emailEl.textContent = user.email;
+  }
+
+  async function refreshAuthUIFromServer() {
+    const token = getAuthToken();
+    if (!token) return updateAuthUI(null);
+    try {
+      const res = await authFetch(RAILWAY_ME_URL);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) updateAuthUI(data.user);
+      else updateAuthUI(null);
+    } catch {
+      updateAuthUI(null);
+    }
+  }
 
   const FILE_PARAM_TYPES = ['fileinput', 'multifileinput', 'combinefileinput'];
 
@@ -2164,8 +2288,16 @@
     btnText.textContent = 'Generating...';
     spinner.classList.remove('hidden');
 
+    if (!getAuthToken()) {
+      showError('Please sign in to generate - this keeps your prompts and outputs private to your account.');
+      submitBtn.disabled = false;
+      btnText.textContent = 'Generate';
+      spinner.classList.add('hidden');
+      return;
+    }
+
     try {
-      const response = await fetch(RAILWAY_BACKEND_URL, {
+      const response = await authFetch(RAILWAY_BACKEND_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2227,7 +2359,7 @@
       let response;
       let data;
       try {
-        response = await fetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+        response = await authFetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
         data = await response.json();
         consecutiveErrors = 0;
       } catch (err) {
@@ -2585,7 +2717,7 @@
     lookupStatus.textContent = 'Looking up task…';
 
     try {
-      const response = await fetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, {
+      const response = await authFetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, {
         method: 'GET',
         mode: getBackendFetchMode(),
         credentials: getBackendFetchCredentials()
@@ -2620,14 +2752,27 @@
   });
 
   // ------------------------------------------------------------------
-  // Top bar: auth modal (placeholder — no backend auth exists yet)
+  // Top bar: auth modal (wired to POST /auth/login and /auth/register)
   // ------------------------------------------------------------------
   const authModal = document.getElementById('auth-modal');
   const authModalTitle = document.getElementById('auth-modal-title');
   const authModalClose = document.getElementById('auth-modal-close');
+  const authForm = document.getElementById('auth-form');
+  const authEmailInput = document.getElementById('auth-email');
+  const authPasswordInput = document.getElementById('auth-password');
+  const authErrorEl = document.getElementById('auth-error');
+  const authSubmitBtn = document.getElementById('auth-submit');
+  const authSwitchModeBtn = document.getElementById('auth-switch-mode');
+
+  let authMode = 'login';
 
   function openAuthModal(mode) {
-    authModalTitle.textContent = mode === 'register' ? 'Sign up' : 'Log in';
+    authMode = mode === 'register' ? 'register' : 'login';
+    authModalTitle.textContent = authMode === 'register' ? 'Sign up' : 'Log in';
+    authSubmitBtn.textContent = authMode === 'register' ? 'Sign up' : 'Log in';
+    authSwitchModeBtn.textContent = authMode === 'register' ? 'Already have an account? Log in' : 'Need an account? Sign up';
+    authErrorEl.classList.add('hidden');
+    authForm.reset();
     authModal.classList.remove('hidden');
   }
   function closeAuthModal() {
@@ -2638,9 +2783,35 @@
   document.getElementById('register-btn')?.addEventListener('click', () => openAuthModal('register'));
   document.querySelector('.footer-login')?.addEventListener('click', () => openAuthModal('login'));
   document.querySelector('.footer-register')?.addEventListener('click', () => openAuthModal('register'));
+  document.getElementById('logout-btn')?.addEventListener('click', logoutAccount);
   authModalClose?.addEventListener('click', closeAuthModal);
   authModal?.addEventListener('click', (e) => { if (e.target === authModal) closeAuthModal(); });
-  document.querySelectorAll('.auth-modal-ok').forEach(btn => btn.addEventListener('click', closeAuthModal));
+  authSwitchModeBtn?.addEventListener('click', () => openAuthModal(authMode === 'register' ? 'login' : 'register'));
+
+  authForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    authErrorEl.classList.add('hidden');
+    authSubmitBtn.disabled = true;
+
+    const email = authEmailInput.value.trim();
+    const password = authPasswordInput.value;
+
+    try {
+      if (authMode === 'register') {
+        await registerAccount(email, password);
+      } else {
+        await loginAccount(email, password);
+      }
+      closeAuthModal();
+    } catch (err) {
+      authErrorEl.textContent = err.message || 'Something went wrong.';
+      authErrorEl.classList.remove('hidden');
+    } finally {
+      authSubmitBtn.disabled = false;
+    }
+  });
+
+  refreshAuthUIFromServer();
 
   const footerYearEl = document.getElementById('footer-year');
   if (footerYearEl) footerYearEl.textContent = String(new Date().getFullYear());

@@ -1,9 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import rateLimit from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
+import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
+import { hashPassword, verifyPassword, issueToken, requireAuth, requireAdmin, findUserByEmail, findUserById, createUser } from './auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,6 +25,27 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// Rate limiting: these routes perform authentication/authorization and/or
+// database access against user accounts, so without a limit they'd be open
+// to brute-force credential guessing and request-flooding. A tighter
+// window is used for login/register (the most brute-forceable endpoints);
+// a looser shared limit covers the rest of the authenticated API surface.
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many attempts. Please try again later.' }
+});
+
+const apiRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many requests. Please slow down.' }
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -1031,8 +1055,158 @@ async function handleReferenceUpload(req, res) {
 app.post('/upload', upload.single('file'), handleReferenceUpload);
 app.post('/api/upload', upload.single('file'), handleReferenceUpload);
 
+// ==================== AUTH / USER ACCOUNTS ====================
+// A single shared Wiro API key backs every request this server makes, so
+// without a local notion of "who is asking" any caller who knows/guesses a
+// taskId could read another user's prompt and output (see /task/:taskId
+// below). These endpoints establish that identity in Postgres.
+
+// Deliberately not a regex (CodeQL flagged a regex-based check here as a
+// potential ReDoS vector on user-controlled input) - a plain structural
+// check is both simpler and immune to catastrophic backtracking.
+function isValidEmail(value) {
+  const email = String(value || '').trim();
+  if (email.length < 3 || email.length > 254) return false;
+  const atIndex = email.indexOf('@');
+  if (atIndex <= 0 || atIndex !== email.lastIndexOf('@')) return false;
+  const localPart = email.slice(0, atIndex);
+  const domainPart = email.slice(atIndex + 1);
+  if (!localPart || !domainPart) return false;
+  if (/\s/.test(email)) return false;
+  const dotIndex = domainPart.lastIndexOf('.');
+  if (dotIndex <= 0 || dotIndex === domainPart.length - 1) return false;
+  return true;
+}
+
+app.post('/auth/register', authRateLimiter, async (req, res) => {
+  if (!isDbConfigured()) {
+    return res.status(503).json({ success: false, error: 'Accounts are not configured on this server (DATABASE_URL missing).' });
+  }
+
+  try {
+    const { email, password, displayName } = req.body || {};
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ success: false, error: 'A valid email is required.' });
+    }
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const existing = await findUserByEmail(normalizedEmail);
+    if (existing) {
+      return res.status(409).json({ success: false, error: 'An account with this email already exists.' });
+    }
+
+    const passwordHash = await hashPassword(String(password));
+    const user = await createUser({ email: normalizedEmail, passwordHash, displayName: displayName || null });
+    const token = issueToken(user);
+
+    return res.status(201).json({
+      success: true,
+      token,
+      user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/auth/login', authRateLimiter, async (req, res) => {
+  if (!isDbConfigured()) {
+    return res.status(503).json({ success: false, error: 'Accounts are not configured on this server (DATABASE_URL missing).' });
+  }
+
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: 'Email and password are required.' });
+    }
+
+    const user = await findUserByEmail(String(email).trim().toLowerCase());
+    // Use the same generic error for "no such user" and "wrong password" so
+    // a login attempt can't be used to enumerate which emails are
+    // registered.
+    if (!user || !user.is_active || !(await verifyPassword(String(password), user.password_hash))) {
+      return res.status(401).json({ success: false, error: 'Invalid email or password.' });
+    }
+
+    const token = issueToken(user);
+    return res.json({
+      success: true,
+      token,
+      user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    const user = await findUserById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+    return res.json({
+      success: true,
+      user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// A user's own generation history, so they never need to rely on
+// remembering/sharing a raw Wiro taskId to revisit past jobs.
+app.get('/me/generations', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, wiro_task_id, model_slug, prompt, status, total_cost, outputs, created_at, completed_at
+       FROM generations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
+      [req.user.id]
+    );
+    return res.json({ success: true, generations: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: list all accounts, so support/ops can review or promote users
+// without direct DB access.
+app.get('/admin/users', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, email, role, display_name, is_active, created_at FROM users ORDER BY created_at DESC LIMIT 500`
+    );
+    return res.json({ success: true, users: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.patch('/admin/users/:id/role', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { role } = req.body || {};
+    if (role !== 'user' && role !== 'admin') {
+      return res.status(400).json({ success: false, error: 'role must be "user" or "admin".' });
+    }
+    const { rows } = await pool.query(
+      `UPDATE users SET role = $1, updated_at = now() WHERE id = $2 RETURNING id, email, role`,
+      [role, req.params.id]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+    return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Dynamic Model Execution Endpoint
-app.post('/generate', async (req, res) => {
+app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const { model, prompt, tag, ...rest } = req.body || {};
 
@@ -1090,6 +1264,24 @@ app.post('/generate', async (req, res) => {
       return res.status(500).json({ error: run?.errors || 'Model execution failed' });
     }
 
+    // Record ownership of this task *before* responding - this is what lets
+    // GET /task/:taskId later verify that only the user who created a job
+    // can look up its prompt/output, instead of the taskId alone acting as
+    // a de-facto bearer token against Wiro's shared API key.
+    try {
+      await pool.query(
+        `INSERT INTO generations (user_id, wiro_task_id, model_slug, prompt, status)
+         VALUES ($1, $2, $3, $4, 'pending')
+         ON CONFLICT (wiro_task_id) DO NOTHING`,
+        [req.user.id, run.taskid, selectedModel, options.prompt]
+      );
+    } catch (dbError) {
+      // Don't fail the whole generation if the ownership record can't be
+      // written - but log loudly, since GET /task/:taskId will then deny
+      // the owner access to their own job until this is fixed.
+      console.error('Failed to record generation ownership:', dbError);
+    }
+
     // Respond as soon as Wiro hands back a task/job ID - do NOT block this
     // request on client.waitForTask(). Some generations (video, long-running
     // models, etc.) take far longer than the browser/proxy's HTTP timeout,
@@ -1135,13 +1327,34 @@ function isTaskPending(task) {
 // finished (or still-running/failed) generation using only the job/task
 // number they saved earlier - without needing to keep the browser tab open
 // or re-submit the same prompt.
-app.get('/task/:taskId', async (req, res) => {
+//
+// IMPORTANT: this server uses a single shared Wiro API key for every user,
+// so a taskId alone is not a secret - Wiro itself will happily return any
+// task's prompt/output to whoever asks. Ownership is therefore enforced
+// locally (via the `generations` table written by POST /generate) *before*
+// ever calling Wiro, so one user can never fetch another user's job by
+// guessing/sharing a taskId.
+app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
   try {
     const taskId = String(req.params.taskId || '').trim();
     if (!taskId) {
       return res.status(400).json({ success: false, error: 'A task ID is required.' });
+    }
+
+    const { rows } = await pool.query(
+      'SELECT user_id FROM generations WHERE wiro_task_id = $1',
+      [taskId]
+    );
+    const ownerRecord = rows[0];
+
+    // Deny existence of the task to anyone but its owner (or an admin) -
+    // returning the same 404 whether the taskId is unknown or belongs to
+    // someone else, so this endpoint can't be used to enumerate/confirm
+    // other users' task IDs either.
+    if (!ownerRecord || (ownerRecord.user_id !== req.user.id && req.user.role !== 'admin')) {
+      return res.status(404).json({ success: false, error: `No task found for ID "${taskId}".` });
     }
 
     const detail = await client.getTask({ taskid: taskId });
@@ -1172,6 +1385,16 @@ app.get('/task/:taskId', async (req, res) => {
       const mediaOutput = downloadableOutputs[0] || null;
       const taskCost = formatTaskCost(task);
 
+      try {
+        await pool.query(
+          `UPDATE generations SET status = 'completed', total_cost = $1, outputs = $2, completed_at = now()
+           WHERE wiro_task_id = $3`,
+          [taskCost.finalAmount, JSON.stringify(downloadableOutputs), taskId]
+        );
+      } catch (dbError) {
+        console.error('Failed to update generation record on completion:', dbError);
+      }
+
       return res.json({
         success: true,
         output: task.debugoutput,
@@ -1187,6 +1410,15 @@ app.get('/task/:taskId', async (req, res) => {
     }
 
     const failureReason = extractFailureReason(task);
+    try {
+      await pool.query(
+        `UPDATE generations SET status = 'failed', completed_at = now() WHERE wiro_task_id = $1`,
+        [taskId]
+      );
+    } catch (dbError) {
+      console.error('Failed to update generation record on failure:', dbError);
+    }
+
     return res.status(200).json({
       success: false,
       error: failureReason,
@@ -1202,6 +1434,12 @@ app.get('/task/:taskId', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+  try {
+    await ensurePgCryptoExtension();
+    await initSchema();
+  } catch (error) {
+    console.error('Failed to initialize database schema:', error);
+  }
   console.log(`Server is running on port ${PORT}`);
 });
