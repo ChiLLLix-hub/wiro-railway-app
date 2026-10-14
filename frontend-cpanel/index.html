@@ -47,6 +47,9 @@
           <button id="register-btn" type="button" class="text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition">Sign up</button>
         </div>
         <div id="auth-signed-in" class="hidden items-center gap-3">
+          <button id="credits-badge" type="button" class="text-xs font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-lg hover:bg-emerald-500/20 transition" title="Add credits">
+            <span id="credits-badge-amount">0</span> credits
+          </button>
           <span id="auth-user-email" class="text-sm text-slate-300 truncate max-w-[10rem]"></span>
           <button id="logout-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Log out</button>
         </div>
@@ -69,6 +72,30 @@
         <button id="auth-submit" type="submit" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-2.5 rounded-xl transition">Log in</button>
       </form>
       <button id="auth-switch-mode" type="button" class="text-xs text-slate-400 hover:text-slate-200 transition w-full text-center">Need an account? Sign up</button>
+    </div>
+  </div>
+
+  <!-- Demo-only "Add Credits" modal: no real payment processor is wired up
+       yet (see POST /me/credits/topup) - this is a placeholder payment page
+       so the "insufficient credits" gate has somewhere real to redirect to. -->
+  <div id="credits-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 relative">
+      <button id="credits-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
+      <h3 class="text-lg font-bold text-slate-100">Add Credits</h3>
+      <p id="credits-modal-message" class="text-amber-300 text-xs bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">You have insufficient credits to generate. Choose a package below to continue.</p>
+      <p class="text-slate-500 text-[11px]">Demo payment page — no real charge is made yet. Credits are added instantly for testing.</p>
+      <div class="space-y-2">
+        <button type="button" data-package="starter" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition">
+          <span>Starter</span><span class="font-semibold text-emerald-300">10 credits</span>
+        </button>
+        <button type="button" data-package="pro" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition">
+          <span>Pro</span><span class="font-semibold text-emerald-300">50 credits</span>
+        </button>
+        <button type="button" data-package="studio" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition">
+          <span>Studio</span><span class="font-semibold text-emerald-300">100 credits</span>
+        </button>
+      </div>
+      <p id="credits-modal-error" class="hidden text-xs text-red-400"></p>
     </div>
   </div>
 
@@ -506,6 +533,34 @@
     updateAuthUI(null);
   }
 
+  // Tracks the signed-in user's current credit balance so the Generate
+  // button (and the top-bar credits badge) always reflect the latest known
+  // value. Updated from /me, /me/credits/topup, and the pre-submit
+  // recheck in the generate form handler below.
+  let currentCredits = null;
+
+  // Enforces "credits below 1 cannot generate": disables the Generate
+  // button and shows a hint pointing at the Add Credits modal whenever the
+  // known balance drops below 1 (including while signed out, where credits
+  // are simply unknown/not applicable and the normal sign-in gate applies
+  // instead).
+  function applyCreditsGate() {
+    if (!submitBtn) return;
+    const isLoggedIn = Boolean(getAuthToken());
+    const insufficientCredits = isLoggedIn && Number.isFinite(currentCredits) && currentCredits < 1;
+    submitBtn.disabled = insufficientCredits;
+    submitBtn.classList.toggle('opacity-50', insufficientCredits);
+    submitBtn.classList.toggle('cursor-not-allowed', insufficientCredits);
+    submitBtn.title = insufficientCredits ? 'Insufficient credits - add credits to generate.' : '';
+  }
+
+  function updateCreditsDisplay(credits) {
+    currentCredits = Number.isFinite(credits) ? credits : null;
+    const amountEl = document.getElementById('credits-badge-amount');
+    if (amountEl) amountEl.textContent = Number.isFinite(currentCredits) ? currentCredits : '0';
+    applyCreditsGate();
+  }
+
   // Reflects the current login state in the header auth widget (added in
   // the markup near the top nav) - shows the signed-in email + logout
   // button, or the sign-in/register controls when logged out.
@@ -519,6 +574,7 @@
     signedOutEl.classList.toggle('hidden', isLoggedIn);
     signedInEl.classList.toggle('hidden', !isLoggedIn);
     if (user && emailEl) emailEl.textContent = user.email;
+    updateCreditsDisplay(user ? user.credits : null);
   }
 
   async function refreshAuthUIFromServer() {
@@ -2296,6 +2352,28 @@
       return;
     }
 
+    // Re-check the live credit balance right before submitting (not just
+    // the possibly-stale value from the last /me refresh) - the server
+    // enforces this too, but rechecking here avoids a pointless round trip
+    // to /generate and immediately redirects to the Add Credits modal
+    // instead of showing a generic error.
+    try {
+      const meRes = await authFetch(RAILWAY_ME_URL, { cache: 'no-store' });
+      const meData = await meRes.json().catch(() => ({}));
+      if (meRes.ok && meData.success) {
+        updateCreditsDisplay(meData.user?.credits);
+      }
+    } catch { /* if this check fails, fall through and let /generate's own 402 handle it */ }
+
+    if (Number.isFinite(currentCredits) && currentCredits < 1) {
+      submitBtn.disabled = false;
+      btnText.textContent = 'Generate Asset';
+      spinner.classList.add('hidden');
+      applyCreditsGate();
+      openCreditsModal('You have insufficient credits to generate. Choose a package below to continue.');
+      return;
+    }
+
     try {
       const response = await authFetch(RAILWAY_BACKEND_URL, {
         method: 'POST',
@@ -2309,6 +2387,15 @@
       });
 
       const data = await response.json();
+
+      if (response.status === 402 || data.code === 'INSUFFICIENT_CREDITS') {
+        updateCreditsDisplay(data.credits);
+        submitBtn.disabled = false;
+        btnText.textContent = 'Generate Asset';
+        spinner.classList.add('hidden');
+        openCreditsModal(data.error || 'You have insufficient credits to generate. Choose a package below to continue.');
+        return;
+      }
 
       if (!response.ok || !data.success) {
         showError(data.error || 'Failed to generate output.', data.debugOutput);
@@ -2812,6 +2899,59 @@
   });
 
   refreshAuthUIFromServer();
+
+  // ------------------------------------------------------------------
+  // Top bar: demo "Add Credits" modal (wired to POST /me/credits/topup)
+  // ------------------------------------------------------------------
+  const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/me/credits/topup`;
+  const creditsModal = document.getElementById('credits-modal');
+  const creditsModalClose = document.getElementById('credits-modal-close');
+  const creditsModalMessage = document.getElementById('credits-modal-message');
+  const creditsModalError = document.getElementById('credits-modal-error');
+
+  function openCreditsModal(message) {
+    if (!creditsModal) return;
+    if (creditsModalMessage && message) creditsModalMessage.textContent = message;
+    creditsModalError?.classList.add('hidden');
+    creditsModal.classList.remove('hidden');
+  }
+  function closeCreditsModal() {
+    creditsModal?.classList.add('hidden');
+  }
+
+  document.getElementById('credits-badge')?.addEventListener('click', () => openCreditsModal('Add credits to your account.'));
+  creditsModalClose?.addEventListener('click', closeCreditsModal);
+  creditsModal?.addEventListener('click', (e) => { if (e.target === creditsModal) closeCreditsModal(); });
+
+  document.querySelectorAll('.credits-package-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!getAuthToken()) {
+        closeCreditsModal();
+        openAuthModal('login');
+        return;
+      }
+      creditsModalError?.classList.add('hidden');
+      btn.disabled = true;
+      try {
+        const res = await authFetch(RAILWAY_CREDITS_TOPUP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ packageId: btn.dataset.package })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to add credits.');
+        updateCreditsDisplay(data.credits);
+        closeCreditsModal();
+      } catch (err) {
+        if (creditsModalError) {
+          creditsModalError.textContent = err.message || 'Something went wrong.';
+          creditsModalError.classList.remove('hidden');
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
 
   const footerYearEl = document.getElementById('footer-year');
   if (footerYearEl) footerYearEl.textContent = String(new Date().getFullYear());

@@ -38,10 +38,17 @@ export async function initSchema() {
       role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
       display_name TEXT,
       is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      credits NUMERIC NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+
+  // CREATE TABLE IF NOT EXISTS above won't add new columns to a users
+  // table that already existed before `credits` was introduced, so add it
+  // separately (idempotent via IF NOT EXISTS) to cover already-deployed
+  // databases.
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS credits NUMERIC NOT NULL DEFAULT 0;`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS generations (

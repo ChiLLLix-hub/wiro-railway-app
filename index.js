@@ -1078,6 +1078,14 @@ function isValidEmail(value) {
   return true;
 }
 
+// Postgres NUMERIC columns come back from `pg` as strings (to avoid float
+// precision loss) - normalize to a JS number everywhere credits are
+// exposed/compared so callers never need to remember to coerce it.
+function toCreditsNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 app.post('/auth/register', authRateLimiter, async (req, res) => {
   if (!isDbConfigured()) {
     return res.status(503).json({ success: false, error: 'Accounts are not configured on this server (DATABASE_URL missing).' });
@@ -1151,8 +1159,38 @@ app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
     }
     return res.json({
       success: true,
-      user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name }
+      user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name, credits: toCreditsNumber(user.credits) }
     });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Demo-only credit top-up: no real payment processor is wired up yet, so
+// this just lets a signed-in user add one of a few fixed credit packages
+// directly to their balance. This exists purely so the "add credits" /
+// payment redirect flow (triggered when a user has <1 credit) has
+// somewhere real to send the user and something real to call - it must be
+// replaced with an actual payment gateway integration before going live.
+const DEMO_CREDIT_PACKAGES = { starter: 10, pro: 50, studio: 100 };
+
+app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    const { packageId } = req.body || {};
+    const amount = DEMO_CREDIT_PACKAGES[packageId];
+    if (!amount) {
+      return res.status(400).json({ success: false, error: `Invalid package. Choose one of: ${Object.keys(DEMO_CREDIT_PACKAGES).join(', ')}.` });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE users SET credits = credits + $1, updated_at = now() WHERE id = $2 RETURNING credits`,
+      [amount, req.user.id]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    return res.json({ success: true, credits: toCreditsNumber(rows[0].credits), added: amount });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -1208,6 +1246,26 @@ app.patch('/admin/users/:id/role', apiRateLimiter, requireAuth, requireAdmin, as
 // Dynamic Model Execution Endpoint
 app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
   try {
+    // Re-check the user's current credit balance against the database on
+    // every call (never trust a balance cached in the JWT or client) - a
+    // user with less than 1 credit cannot start a new generation. Returns
+    // 402 Payment Required with a dedicated error code so the frontend can
+    // redirect straight to the "add credits" flow instead of showing a
+    // generic failure.
+    const billingUser = await findUserById(req.user.id);
+    if (!billingUser) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+    const currentCredits = toCreditsNumber(billingUser.credits);
+    if (currentCredits < 1) {
+      return res.status(402).json({
+        success: false,
+        error: 'You have insufficient credits to generate. Please add credits to continue.',
+        code: 'INSUFFICIENT_CREDITS',
+        credits: currentCredits
+      });
+    }
+
     const { model, prompt, tag, ...rest } = req.body || {};
 
     const selectedModel = model || 'alibaba/wan-2-7-image';
@@ -1386,11 +1444,25 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
       const taskCost = formatTaskCost(task);
 
       try {
-        await pool.query(
+        // Only transition status -> 'completed' (and deduct credits) the
+        // first time this task is observed as finished - this endpoint is
+        // polled repeatedly while/after a job runs, and task.pexit stays
+        // '0' on every subsequent poll, so without the `status <> 'completed'`
+        // guard the user's credits would be deducted again on every poll.
+        const { rows: completedRows } = await pool.query(
           `UPDATE generations SET status = 'completed', total_cost = $1, outputs = $2, completed_at = now()
-           WHERE wiro_task_id = $3`,
+           WHERE wiro_task_id = $3 AND status <> 'completed'
+           RETURNING user_id`,
           [taskCost.finalAmount, JSON.stringify(downloadableOutputs), taskId]
         );
+
+        const chargedUserId = completedRows[0]?.user_id;
+        if (chargedUserId && Number.isFinite(taskCost.finalAmount) && taskCost.finalAmount > 0) {
+          await pool.query(
+            `UPDATE users SET credits = credits - $1, updated_at = now() WHERE id = $2`,
+            [taskCost.finalAmount, chargedUserId]
+          );
+        }
       } catch (dbError) {
         console.error('Failed to update generation record on completion:', dbError);
       }
