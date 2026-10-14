@@ -2389,7 +2389,6 @@
       const data = await response.json();
 
       if (response.status === 402 || data.code === 'INSUFFICIENT_CREDITS') {
-        updateCreditsDisplay(data.credits);
         submitBtn.disabled = false;
         btnText.textContent = 'Generate Asset';
         spinner.classList.add('hidden');
@@ -2401,6 +2400,11 @@
         showError(data.error || 'Failed to generate output.', data.debugOutput);
         return;
       }
+
+      // A hold (escrow) equal to the estimated cost was just deducted from
+      // the user's balance (see POST /generate) - reflect that immediately
+      // in the top-bar badge rather than waiting for the task to finish.
+      if (data.credits != null) updateCreditsDisplay(data.credits);
 
       // The backend now responds as soon as Wiro hands back a job/task ID -
       // it no longer waits for the (potentially long-running) generation to
@@ -2475,6 +2479,12 @@
       submitBtn.disabled = false;
       btnText.textContent = 'Generate Asset';
       spinner.classList.add('hidden');
+
+      // The held (escrow) credits for this generation were just settled
+      // server-side - refunded in full on failure, or trued up against the
+      // real final cost on success (see GET /task/:taskId) - reflect the
+      // resulting balance in the top-bar badge right away.
+      if (data.credits != null) updateCreditsDisplay(data.credits);
 
       if (response.ok && data.success) {
         const mediaUrl = extractMediaUrl(data);

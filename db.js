@@ -58,12 +58,19 @@ export async function initSchema() {
       model_slug TEXT,
       prompt TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
+      held_amount NUMERIC,
       total_cost NUMERIC,
       outputs JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       completed_at TIMESTAMPTZ
     );
   `);
+
+  // `held_amount` records how many credits were put on hold (escrow) for
+  // this generation at submission time - needed to settle (refund/charge
+  // the difference against) once the task finishes, even on databases
+  // created before this column existed.
+  await pool.query(`ALTER TABLE generations ADD COLUMN IF NOT EXISTS held_amount NUMERIC;`);
 
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS generations_wiro_task_id_idx ON generations (wiro_task_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS generations_user_id_idx ON generations (user_id);`);
