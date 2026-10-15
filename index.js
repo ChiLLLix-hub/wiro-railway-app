@@ -1558,6 +1558,31 @@ app.post('/me/integrations/telegram/link', apiRateLimiter, requireAuth, async (r
   }
 });
 
+app.put('/me/integrations/telegram', emailTestRateLimiter, requireAuth, async (req, res) => {
+  const chatId = String(req.body?.chatId || '').trim();
+  if (!/^\d{5,15}$/.test(chatId)) {
+    return res.status(400).json({ success: false, error: 'Enter your numeric Telegram ID (digits only).' });
+  }
+  if (!process.env.TELEGRAM_BOT_TOKEN) {
+    return res.status(503).json({ success: false, error: 'Telegram notifications are not configured.' });
+  }
+  try {
+    const tg = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: 'Telegram notifications are now enabled for your account. Generation results will be sent here.' }),
+      signal: AbortSignal.timeout(15_000)
+    });
+    if (!tg.ok) {
+      return res.status(400).json({ success: false, error: 'Could not message that Telegram ID. Open the bot in Telegram, press Start, then try again.' });
+    }
+    await pool.query('UPDATE users SET telegram_chat_id = $1 WHERE id = $2', [chatId, req.user.id]);
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not save Telegram ID.' });
+  }
+});
+
 app.post('/me/integrations/discord/link', apiRateLimiter, requireAuth, async (req, res) => {
   const clientId = process.env.DISCORD_CLIENT_ID;
   const redirectUri = process.env.DISCORD_REDIRECT_URI;
