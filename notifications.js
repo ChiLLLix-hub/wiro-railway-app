@@ -50,10 +50,6 @@ async function sendEmail({ to, subject, text }) {
   });
 }
 
-export async function sendTestEmail({ to, subject, message }) {
-  return sendEmail({ to, subject, text: message });
-}
-
 export async function queueMail({ userId, eventKey, to, subject, message, link }) {
   await pool.query(
     `INSERT INTO notification_outbox (user_id, event_key, channel, event_type, destination, subject, message, link)

@@ -24,4 +24,4 @@ Configure the sending domain's SPF and DKIM records with the mail host, and add 
 
 The database outbox retries failed deliveries with increasing delays and uses unique event/channel keys to avoid duplicate sends. The Railway process checks pending generations in the background, so generation notifications do not depend on the browser remaining open. Demo top-ups remain test credits, not proof of a payment.
 
-After configuring email, sign in with a verified account, then use **Dashboard → Test email delivery** to send a message to that account's email address. The form reports safe diagnostics and is limited to three tests per 15 minutes per IP. After configuring each other integration, verify its connection with a user account and enable the desired event/channel toggles in the dashboard. Provider failures leave queued messages for retry and are recorded in server logs.
+After configuring email, verify its connection with a user account and enable the desired event/channel toggles in the dashboard. Provider failures leave queued messages for retry and are recorded in server logs.
