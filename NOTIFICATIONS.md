@@ -4,7 +4,9 @@ Optional notifications are off by default. Users manage generation-complete and 
 
 ## Email
 
-Email is delivered directly over SMTP from this app.
+Email is delivered through the Resend HTTP API when `RESEND_API_KEY` is set, otherwise directly over SMTP.
+
+Railway blocks outbound SMTP (ports 25/465/587) on the Free, Trial and Hobby plans; only Pro and above can use SMTP. Resend's API uses HTTPS, so it works on Hobby. The "Resend Starter" Railway template is not required: copy the API key into this app's service as `RESEND_API_KEY` (the template service itself is not called), verify your sending domain in Resend, and set `EMAIL_FROM` to an address on that domain (for example, `Mygenx Studio <no-reply@example.com>`).
 
 Set `FRONTEND_BASE_URL` on this app to the public cPanel site origin, without a trailing slash; account verification and password-reset messages use it in their links.
 
