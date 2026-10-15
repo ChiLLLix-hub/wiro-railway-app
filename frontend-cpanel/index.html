@@ -339,59 +339,6 @@
       </div>
       </div>
 
-      <!-- ============ RETRIEVE A PREVIOUS GENERATION BY JOB/TASK ID ============ -->
-      <div class="bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8">
-        <h3 class="text-sm font-semibold text-slate-200">Retrieve a Previous Generation</h3>
-        <p class="text-slate-400 text-xs mt-1">Already have a job/task ID from an earlier generation? Look it up here to view its result, or the failure reason if it didn't succeed.</p>
-
-        <form id="lookup-form" class="flex flex-col sm:flex-row gap-2 mt-3">
-          <input
-            id="lookup-task-id"
-            type="text"
-            required
-            placeholder="Paste job/task ID…"
-            class="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition font-mono"
-          />
-          <button
-            type="submit"
-            id="lookup-btn"
-            class="bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-sm py-2.5 px-5 rounded-xl transition disabled:opacity-50"
-          >Check Status</button>
-        </form>
-
-        <div id="lookup-status" class="hidden text-slate-400 text-xs mt-2"></div>
-
-        <div id="lookup-error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4 space-y-2 mt-3">
-          <p id="lookup-error-message" class="font-medium"></p>
-          <pre id="lookup-error-debug" class="hidden whitespace-pre-wrap break-words text-red-300/80 text-xs bg-red-950/40 border border-red-500/30 rounded-lg p-3"></pre>
-        </div>
-
-        <div id="lookup-result-container" class="hidden space-y-4 pt-3">
-          <div class="grid gap-3 md:grid-cols-2 text-sm">
-            <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
-              <p class="text-xs uppercase tracking-wider text-slate-500">Job / Task ID</p>
-              <p id="lookup-task-id-display" class="mt-2 font-mono text-slate-200 break-all">—</p>
-            </div>
-            <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4">
-              <p class="text-xs uppercase tracking-wider text-slate-500">Generation Cost</p>
-              <p id="lookup-task-cost" class="mt-2 text-slate-200">—</p>
-            </div>
-          </div>
-
-          <div id="lookup-media-wrapper" class="relative bg-slate-950 rounded-xl overflow-hidden border border-slate-800 aspect-square flex items-center justify-center"></div>
-
-          <div class="flex items-center justify-between text-sm pt-1">
-            <a id="lookup-download-link" href="" target="_blank" class="hidden text-blue-400 hover:underline">
-              Open Full File ↗
-            </a>
-          </div>
-
-          <div class="space-y-2">
-            <h3 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Files</h3>
-            <div id="lookup-downloads-list" class="space-y-2 text-sm text-slate-300"></div>
-          </div>
-        </div>
-      </div>
     </div>
 
 
@@ -846,21 +793,6 @@
   const threeDHint = document.getElementById('three-d-hint');
   const estimatedCostContainer = document.getElementById('estimated-cost-container');
   const estimatedCostEl = document.getElementById('estimated-cost');
-
-  // Retrieve-by-task-ID elements
-  const lookupForm = document.getElementById('lookup-form');
-  const lookupTaskIdInput = document.getElementById('lookup-task-id');
-  const lookupBtn = document.getElementById('lookup-btn');
-  const lookupStatus = document.getElementById('lookup-status');
-  const lookupErrorBox = document.getElementById('lookup-error-box');
-  const lookupErrorMessage = document.getElementById('lookup-error-message');
-  const lookupErrorDebug = document.getElementById('lookup-error-debug');
-  const lookupResultContainer = document.getElementById('lookup-result-container');
-  const lookupTaskIdDisplay = document.getElementById('lookup-task-id-display');
-  const lookupTaskCostEl = document.getElementById('lookup-task-cost');
-  const lookupMediaWrapper = document.getElementById('lookup-media-wrapper');
-  const lookupDownloadLink = document.getElementById('lookup-download-link');
-  const lookupDownloadsList = document.getElementById('lookup-downloads-list');
 
   const PAGE_SIZE = 20; // Matches Wiro's own model catalog page size.
 
@@ -2462,7 +2394,7 @@
         consecutiveErrors += 1;
         if (consecutiveErrors >= GENERATION_POLL_MAX_CONSECUTIVE_ERRORS) {
           if (generationPollToken === requestToken) {
-            generationStatusEl.textContent = `Lost connection while checking status. Use "Retrieve a Previous Generation" below with job ID ${taskId} once you're back online.`;
+            generationStatusEl.textContent = `Lost connection while checking status. Your job ID is ${taskId} - contact support to look it up once you're back online.`;
             submitBtn.disabled = false;
             btnText.textContent = 'Generate Asset';
             spinner.classList.add('hidden');
@@ -2742,116 +2674,6 @@
     errorBox.classList.remove('hidden');
     resultCard.classList.remove('hidden');
   }
-
-  // ------------------------------------------------------------------
-  // Retrieve a previously finished (or failed) generation by job/task ID
-  // ------------------------------------------------------------------
-
-  function resetLookupResult() {
-    lookupStatus.classList.add('hidden');
-    lookupStatus.textContent = '';
-    lookupErrorBox.classList.add('hidden');
-    lookupErrorMessage.textContent = '';
-    lookupErrorDebug.textContent = '';
-    lookupErrorDebug.classList.add('hidden');
-    lookupResultContainer.classList.add('hidden');
-    lookupTaskIdDisplay.textContent = '—';
-    lookupTaskCostEl.textContent = '—';
-    lookupMediaWrapper.innerHTML = '';
-    lookupDownloadLink.classList.add('hidden');
-    lookupDownloadLink.removeAttribute('href');
-    lookupDownloadsList.innerHTML = '';
-  }
-
-  function renderLookupResult(data) {
-    const downloads = getDownloadableOutputs(data);
-    const mediaUrl = extractMediaUrl(data);
-    const primaryDownloadUrl = mediaUrl || (downloads[0] && downloads[0].url) || '';
-
-    lookupTaskIdDisplay.textContent = data.taskId || (data.task && data.task.id) || '—';
-    // As with a fresh generation, only the final converted cost is ever
-    // shown here - never Wiro's raw USD amount nor the conversion rate.
-    lookupTaskCostEl.textContent = data.finalCostDisplay ?? '—';
-
-    if (mediaUrl) {
-      renderMedia(mediaUrl, lookupMediaWrapper);
-    } else {
-      lookupMediaWrapper.innerHTML = '<p class="px-6 text-center text-sm text-slate-400">No preview available, but the generated file links are ready below.</p>';
-    }
-
-    lookupDownloadLink.classList.toggle('hidden', !primaryDownloadUrl);
-    lookupDownloadLink.href = primaryDownloadUrl;
-
-    lookupDownloadsList.innerHTML = '';
-    if (downloads.length === 0) {
-      lookupDownloadsList.innerHTML = '<p class="text-slate-500">No download files were returned for this task.</p>';
-    } else {
-      downloads.forEach((download, index) => {
-        const item = document.createElement('a');
-        item.href = download.url;
-        item.target = '_blank';
-        item.rel = 'noopener noreferrer';
-        item.className = 'flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 hover:border-slate-700';
-        item.innerHTML = `
-          <span>
-            <span class="block text-slate-100">${escapeHtml(download.name || `Output ${index + 1}`)}</span>
-            <span class="block text-xs text-slate-500">${escapeHtml(download.contentType || 'application/octet-stream')}</span>
-          </span>
-          <span class="text-blue-400">Open ↗</span>
-        `;
-        lookupDownloadsList.appendChild(item);
-      });
-    }
-
-    lookupResultContainer.classList.remove('hidden');
-  }
-
-  lookupForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const taskId = lookupTaskIdInput.value.trim();
-    if (!taskId) return;
-
-    resetLookupResult();
-    lookupBtn.disabled = true;
-    lookupBtn.textContent = 'Checking…';
-    lookupStatus.classList.remove('hidden');
-    lookupStatus.textContent = 'Looking up task…';
-
-    try {
-      const response = await authFetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, {
-        method: 'GET',
-        mode: getBackendFetchMode(),
-        credentials: getBackendFetchCredentials()
-      });
-      const data = await response.json();
-      lookupStatus.classList.add('hidden');
-
-      if (data.pending) {
-        lookupStatus.classList.remove('hidden');
-        lookupStatus.textContent = data.error || 'This task is still queued or running. Please check again shortly.';
-        return;
-      }
-
-      if (response.ok && data.success) {
-        renderLookupResult(data);
-      } else {
-        lookupErrorMessage.textContent = data.error || 'Could not find a generation for this job/task ID.';
-        if (data.debugOutput && String(data.debugOutput).trim()) {
-          lookupErrorDebug.textContent = String(data.debugOutput).trim();
-          lookupErrorDebug.classList.remove('hidden');
-        }
-        lookupErrorBox.classList.remove('hidden');
-      }
-    } catch (err) {
-      lookupStatus.classList.add('hidden');
-      lookupErrorMessage.textContent = 'Network error or server unreachable while looking up this task.';
-      lookupErrorBox.classList.remove('hidden');
-    } finally {
-      lookupBtn.disabled = false;
-      lookupBtn.textContent = 'Check Status';
-    }
-  });
 
   // ------------------------------------------------------------------
   // Top bar: auth modal (wired to POST /auth/login and /auth/register)

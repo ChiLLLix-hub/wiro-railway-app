@@ -1550,9 +1550,11 @@ app.get('/admin/transactions', apiRateLimiter, requireAuth, requireAdmin, async 
   }
 });
 
-// Admin-only: aggregate credit top-ups today/this week/this month, the
-// combined available user balance, and headline counts. Demo top-ups are
-// the only purchase flow currently supported; manual adjustments are excluded.
+// Admin-only: aggregate credit top-ups *and* spend (credits actually used
+// on completed generations, across every user) today/this week/this
+// month, plus the combined available user balance and headline counts.
+// Demo top-ups are the only purchase flow currently supported; manual
+// adjustments are excluded.
 app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
   try {
     const { rows: revenueRows } = await pool.query(
@@ -1562,6 +1564,17 @@ app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, r
          COALESCE(SUM(amount) FILTER (WHERE created_at >= date_trunc('month', now())), 0) AS this_month
        FROM credit_transactions
        WHERE type = 'topup_demo' AND amount > 0`
+    );
+    // Across every user (not just one), how many credits were actually
+    // spent on completed generations today/this week/this month - mirrors
+    // the per-user query in GET /me/summary, just without the user_id filter.
+    const { rows: spendRows } = await pool.query(
+      `SELECT
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('day', now())), 0) AS today,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('week', now())), 0) AS this_week,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('month', now())), 0) AS this_month
+       FROM generations
+       WHERE status = 'completed'`
     );
     const { rows: countRows } = await pool.query(
       `SELECT
@@ -1580,6 +1593,7 @@ app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, r
     );
 
     const revenue = revenueRows[0] || {};
+    const spend = spendRows[0] || {};
     const counts = countRows[0] || {};
     const logins = loginRows[0] || {};
 
@@ -1589,6 +1603,9 @@ app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, r
         revenueToday: toCreditsNumber(revenue.today),
         revenueThisWeek: toCreditsNumber(revenue.this_week),
         revenueThisMonth: toCreditsNumber(revenue.this_month),
+        spendToday: toCreditsNumber(spend.today),
+        spendThisWeek: toCreditsNumber(spend.this_week),
+        spendThisMonth: toCreditsNumber(spend.this_month),
         totalUnusedCredits: toCreditsNumber(counts.total_unused_credits),
         totalUsers: Number(counts.total_users) || 0,
         activeUsers: Number(counts.active_users) || 0,
