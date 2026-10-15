@@ -60,6 +60,14 @@
     </div>
   </header>
 
+  <div id="app-toast" role="status" aria-live="polite" class="hidden fixed bottom-5 right-5 z-[70] max-w-md rounded-xl border px-4 py-3 shadow-xl">
+    <div class="flex items-center gap-4">
+      <p id="app-toast-message" class="text-sm"></p>
+      <button id="app-toast-action" type="button" class="hidden shrink-0 text-sm font-semibold underline"></button>
+      <button id="app-toast-close" type="button" aria-label="Dismiss notification" class="text-slate-300">✕</button>
+    </div>
+  </div>
+
   <!-- ==================== AUTH MODAL ==================== -->
   <div id="auth-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 relative">
@@ -74,8 +82,18 @@
         <p id="auth-error" class="hidden text-xs text-red-400"></p>
         <button id="auth-submit" type="submit" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-2.5 rounded-xl transition">Log in</button>
       </form>
+      <button id="forgot-password-btn" type="button" class="text-xs text-blue-400 hover:underline w-full text-center">Forgot password?</button>
       <button id="auth-switch-mode" type="button" class="text-xs text-slate-400 hover:text-slate-200 transition w-full text-center">Need an account? Sign up</button>
     </div>
+  </div>
+
+  <div id="reset-password-modal" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70">
+    <form id="reset-password-form" class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
+      <h3 class="text-lg font-bold">Set a new password</h3>
+      <input id="reset-password-input" type="password" required minlength="8" autocomplete="new-password" placeholder="New password (min 8 characters)" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+      <p id="reset-password-error" class="hidden text-xs text-red-400"></p>
+      <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 font-semibold py-2.5 rounded-xl">Reset password</button>
+    </form>
   </div>
 
   <!-- Demo-only "Add Credits" modal: no real payment processor is wired up
@@ -402,6 +420,9 @@
   const RAILWAY_TASK_URL = `${BACKEND_BASE_URL}/task`;
   const RAILWAY_AUTH_LOGIN_URL = `${BACKEND_BASE_URL}/auth/login`;
   const RAILWAY_AUTH_REGISTER_URL = `${BACKEND_BASE_URL}/auth/register`;
+  const RAILWAY_AUTH_VERIFY_URL = `${BACKEND_BASE_URL}/auth/verify-email`;
+  const RAILWAY_AUTH_FORGOT_URL = `${BACKEND_BASE_URL}/auth/forgot-password`;
+  const RAILWAY_AUTH_RESET_URL = `${BACKEND_BASE_URL}/auth/reset-password`;
   const RAILWAY_ME_URL = `${BACKEND_BASE_URL}/me`;
 
   // ==================== ACCOUNT / AUTH ====================
@@ -452,6 +473,25 @@
     return res;
   }
 
+  function showToast(message, type = 'success', action = null) {
+    const toast = document.getElementById('app-toast');
+    const messageEl = document.getElementById('app-toast-message');
+    const actionBtn = document.getElementById('app-toast-action');
+    messageEl.textContent = message;
+    toast.className = `fixed bottom-5 right-5 z-[70] max-w-md rounded-xl border px-4 py-3 shadow-xl ${type === 'error' ? 'bg-red-950 border-red-800 text-red-100' : 'bg-emerald-950 border-emerald-800 text-emerald-100'}`;
+    if (action) {
+      actionBtn.textContent = action.label;
+      actionBtn.onclick = action.onClick;
+      actionBtn.classList.remove('hidden');
+    } else {
+      actionBtn.classList.add('hidden');
+      actionBtn.onclick = null;
+    }
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => toast.classList.add('hidden'), 7000);
+  }
+  document.getElementById('app-toast-close').addEventListener('click', () => document.getElementById('app-toast').classList.add('hidden'));
+
   async function registerAccount(email, password) {
     const res = await fetch(RAILWAY_AUTH_REGISTER_URL, {
       method: 'POST',
@@ -460,9 +500,7 @@
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) throw new Error(data.error || 'Registration failed.');
-    setAuthToken(data.token);
-    updateAuthUI(data.user);
-    return data.user;
+    return data;
   }
 
   async function loginAccount(email, password) {
@@ -2443,8 +2481,14 @@
         } else if (taskSummaryContainer.classList.contains('hidden')) {
           showError('Generation finished, but no media URL could be extracted.');
         }
+        showToast('Generation completed successfully.', 'success', {
+          label: 'View result',
+          onClick: () => resultCard.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        });
       } else {
-        showError(data.error || 'Failed to generate output.', data.debugOutput);
+        const message = data.error || 'Failed to generate output.';
+        showError(message, data.debugOutput);
+        showToast(message, 'error');
       }
       return;
     }
@@ -2695,6 +2739,7 @@
     authModalTitle.textContent = authMode === 'register' ? 'Sign up' : 'Log in';
     authSubmitBtn.textContent = authMode === 'register' ? 'Sign up' : 'Log in';
     authSwitchModeBtn.textContent = authMode === 'register' ? 'Already have an account? Log in' : 'Need an account? Sign up';
+    document.getElementById('forgot-password-btn')?.classList.toggle('hidden', authMode !== 'login');
     authErrorEl.classList.add('hidden');
     authForm.reset();
     authModal.classList.remove('hidden');
@@ -2711,6 +2756,28 @@
   authModalClose?.addEventListener('click', closeAuthModal);
   authModal?.addEventListener('click', (e) => { if (e.target === authModal) closeAuthModal(); });
   authSwitchModeBtn?.addEventListener('click', () => openAuthModal(authMode === 'register' ? 'login' : 'register'));
+  document.getElementById('forgot-password-btn')?.addEventListener('click', async () => {
+    const email = authEmailInput.value.trim();
+    if (!email) {
+      authErrorEl.textContent = 'Enter your email address first.';
+      authErrorEl.classList.remove('hidden');
+      return;
+    }
+    try {
+      const response = await fetch(RAILWAY_AUTH_FORGOT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not request password reset.');
+      showToast(data.message || 'If your account exists, a reset link has been sent.');
+      closeAuthModal();
+    } catch (error) {
+      authErrorEl.textContent = error.message;
+      authErrorEl.classList.remove('hidden');
+    }
+  });
 
   authForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -2722,7 +2789,10 @@
 
     try {
       if (authMode === 'register') {
-        await registerAccount(email, password);
+        const result = await registerAccount(email, password);
+        closeAuthModal();
+        showToast(result.message || 'Check your email to verify your account.');
+        return;
       } else {
         await loginAccount(email, password);
       }
@@ -2732,6 +2802,47 @@
       authErrorEl.classList.remove('hidden');
     } finally {
       authSubmitBtn.disabled = false;
+    }
+  });
+
+  let passwordResetToken = '';
+  const resetParams = new URLSearchParams(window.location.search);
+  const verificationToken = resetParams.get('verifyToken');
+  passwordResetToken = resetParams.get('resetToken') || '';
+  if (verificationToken) {
+    fetch(RAILWAY_AUTH_VERIFY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: verificationToken })
+    }).then(async response => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'Email verification failed.');
+      showToast(data.message || 'Email verified. You can now log in.');
+    }).catch(error => showToast(error.message, 'error'));
+    history.replaceState(null, '', window.location.pathname + window.location.hash);
+  }
+  if (passwordResetToken) {
+    document.getElementById('reset-password-modal').classList.remove('hidden');
+    history.replaceState(null, '', window.location.pathname + window.location.hash);
+  }
+  document.getElementById('reset-password-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const errorEl = document.getElementById('reset-password-error');
+    errorEl.classList.add('hidden');
+    try {
+      const response = await fetch(RAILWAY_AUTH_RESET_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: passwordResetToken, password: document.getElementById('reset-password-input').value })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'Password reset failed.');
+      document.getElementById('reset-password-modal').classList.add('hidden');
+      showToast(data.message || 'Password updated. Please log in.');
+      openAuthModal('login');
+    } catch (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
     }
   });
 

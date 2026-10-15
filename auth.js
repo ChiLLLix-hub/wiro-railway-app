@@ -91,8 +91,8 @@ export async function findUserById(id) {
 
 export async function createUser({ email, passwordHash, role = 'user', displayName = null }) {
   const { rows } = await pool.query(
-    `INSERT INTO users (email, password_hash, role, display_name)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO users (email, password_hash, role, display_name, email_verified)
+     VALUES ($1, $2, $3, $4, FALSE)
      RETURNING id, email, role, display_name, created_at`,
     [email.toLowerCase(), passwordHash, role, displayName]
   );

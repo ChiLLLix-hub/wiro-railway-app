@@ -2,11 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
 import { hashPassword, verifyPassword, issueToken, requireAuth, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt, markUserLoggedIn } from './auth.js';
+import { frontendBaseUrl, processNotificationOutbox, queueMail, queueOptInNotifications } from './notifications.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -72,6 +73,47 @@ const upload = multer({
 // CURRENCY_SYMBOL to change the displayed label (defaults to "RM").
 const CURRENCY_EXCHANGE_RATE = Number(process.env.CURRENCY_EXCHANGE);
 const CURRENCY_SYMBOL = process.env.CURRENCY_SYMBOL || 'RM';
+
+function createOpaqueToken() {
+  return randomBytes(32).toString('hex');
+}
+
+function hashOpaqueToken(token) {
+  return createHash('sha256').update(String(token)).digest('hex');
+}
+
+async function createAccountToken(userId, purpose, lifetimeHours) {
+  const token = createOpaqueToken();
+  await pool.query(
+    `DELETE FROM account_tokens WHERE user_id = $1 AND purpose = $2`,
+    [userId, purpose]
+  );
+  await pool.query(
+    `INSERT INTO account_tokens (token_hash, user_id, purpose, expires_at)
+     VALUES ($1, $2, $3, now() + ($4 * interval '1 hour'))`,
+    [hashOpaqueToken(token), userId, purpose, lifetimeHours]
+  );
+  return token;
+}
+
+async function queueAccountEmail(userId, email, purpose, token) {
+  const verification = purpose === 'email_verification';
+  const subject = verification ? 'Verify your email address' : 'Reset your password';
+  const link = verification
+    ? `${frontendBaseUrl()}/?verifyToken=${encodeURIComponent(token)}`
+    : `${frontendBaseUrl()}/?resetToken=${encodeURIComponent(token)}`;
+  const message = verification
+    ? 'Please verify your email address to activate your account.'
+    : 'Use this link to reset your password. If you did not request a reset, you can ignore this email.';
+  await queueMail({
+    userId,
+    eventKey: `${purpose}:${userId}:${hashOpaqueToken(token)}`,
+    to: email,
+    subject,
+    message,
+    link
+  });
+}
 
 // Only the final, converted cost is ever meant to reach the client - Wiro's
 // raw USD `totalcost` and the exchange rate itself are intentionally kept
@@ -1189,12 +1231,12 @@ app.post('/auth/register', authRateLimiter, async (req, res) => {
 
     const passwordHash = await hashPassword(String(password));
     const user = await createUser({ email: normalizedEmail, passwordHash, displayName: displayName || null });
-    const token = issueToken(user);
+    const token = await createAccountToken(user.id, 'email_verification', 24);
+    await queueAccountEmail(user.id, user.email, 'email_verification', token);
 
     return res.status(201).json({
       success: true,
-      token,
-      user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name }
+      message: 'Account created. Check your email for a verification link before logging in.'
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -1235,6 +1277,10 @@ app.post('/auth/login', authRateLimiter, async (req, res) => {
       await recordLoginAttempt({ email: normalizedEmail, success: false, reason: !user ? 'no_such_user' : (!user.is_active ? 'inactive' : 'bad_password'), ip, userAgent });
       return res.status(401).json({ success: false, error: 'Invalid email or password.' });
     }
+    if (!user.email_verified) {
+      await recordLoginAttempt({ email: normalizedEmail, success: false, reason: 'email_not_verified', ip, userAgent });
+      return res.status(403).json({ success: false, error: 'Please verify your email before logging in.' });
+    }
 
     await recordLoginAttempt({ email: normalizedEmail, success: true, ip, userAgent });
     await markUserLoggedIn(user.id);
@@ -1247,6 +1293,59 @@ app.post('/auth/login', authRateLimiter, async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/auth/verify-email', authRateLimiter, async (req, res) => {
+  try {
+    const token = String(req.body?.token || '');
+    const { rows } = await pool.query(
+      `DELETE FROM account_tokens
+       WHERE token_hash = $1 AND purpose = 'email_verification' AND expires_at > now()
+       RETURNING user_id`,
+      [hashOpaqueToken(token)]
+    );
+    if (!rows[0]) return res.status(400).json({ success: false, error: 'This verification link is invalid or expired.' });
+    await pool.query('UPDATE users SET email_verified = TRUE, updated_at = now() WHERE id = $1', [rows[0].user_id]);
+    return res.json({ success: true, message: 'Email verified. You can now log in.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not verify email.' });
+  }
+});
+
+app.post('/auth/forgot-password', authRateLimiter, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  try {
+    if (isValidEmail(email)) {
+      const user = await findUserByEmail(email);
+      if (user) {
+        const token = await createAccountToken(user.id, 'password_reset', 1);
+        await queueAccountEmail(user.id, user.email, 'password_reset', token);
+      }
+    }
+    return res.json({ success: true, message: 'If an account exists for that address, a password-reset link has been sent.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not request a password reset.' });
+  }
+});
+
+app.post('/auth/reset-password', authRateLimiter, async (req, res) => {
+  const token = String(req.body?.token || '');
+  const password = String(req.body?.password || '');
+  if (password.length < 8) return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM account_tokens
+       WHERE token_hash = $1 AND purpose = 'password_reset' AND expires_at > now()
+       RETURNING user_id`,
+      [hashOpaqueToken(token)]
+    );
+    if (!rows[0]) return res.status(400).json({ success: false, error: 'This password-reset link is invalid or expired.' });
+    const passwordHash = await hashPassword(password);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [passwordHash, rows[0].user_id]);
+    return res.json({ success: true, message: 'Password updated. You can now log in.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not reset password.' });
   }
 });
 
@@ -1269,6 +1368,206 @@ app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+const NOTIFICATION_CHANNELS = ['email', 'telegram', 'discord'];
+const NOTIFICATION_EVENTS = ['generation_success', 'demo_credit_added'];
+
+app.get('/me/notification-settings', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    const [{ rows: userRows }, { rows: preferenceRows }] = await Promise.all([
+      pool.query('SELECT email, email_verified, telegram_chat_id, discord_user_id FROM users WHERE id = $1', [req.user.id]),
+      pool.query('SELECT channel, event_type, enabled FROM user_notification_preferences WHERE user_id = $1', [req.user.id])
+    ]);
+    const preferences = Object.fromEntries(NOTIFICATION_CHANNELS.map(channel => [
+      channel,
+      Object.fromEntries(NOTIFICATION_EVENTS.map(event => [event, false]))
+    ]));
+    for (const row of preferenceRows) preferences[row.channel][row.event_type] = row.enabled;
+    const user = userRows[0];
+    return res.json({
+      success: true,
+      preferences,
+      linked: {
+        email: Boolean(user?.email_verified),
+        telegram: Boolean(user?.telegram_chat_id),
+        discord: Boolean(user?.discord_user_id)
+      },
+      emailVerified: Boolean(user?.email_verified)
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not load notification settings.' });
+  }
+});
+
+app.put('/me/notification-settings', apiRateLimiter, requireAuth, async (req, res) => {
+  const preferences = req.body?.preferences;
+  if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences)) {
+    return res.status(400).json({ success: false, error: 'Notification preferences are required.' });
+  }
+  try {
+    const { rows: users } = await pool.query(
+      'SELECT email_verified, telegram_chat_id, discord_user_id FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const user = users[0];
+    for (const channel of NOTIFICATION_CHANNELS) {
+      for (const event of NOTIFICATION_EVENTS) {
+        const enabled = preferences[channel]?.[event];
+        if (typeof enabled !== 'boolean') continue;
+        if (enabled && !(channel === 'email' ? user?.email_verified
+          : channel === 'telegram' ? user?.telegram_chat_id
+            : user?.discord_user_id)) {
+          return res.status(400).json({ success: false, error: `Link and verify ${channel} before enabling its notifications.` });
+        }
+        await pool.query(
+          `INSERT INTO user_notification_preferences (user_id, channel, event_type, enabled)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (user_id, channel, event_type)
+           DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
+          [req.user.id, channel, event, enabled]
+        );
+      }
+    }
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not save notification settings.' });
+  }
+});
+
+app.post('/me/integrations/telegram/link', apiRateLimiter, requireAuth, async (req, res) => {
+  const botUsername = String(process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, '');
+  if (!botUsername || !process.env.TELEGRAM_BOT_TOKEN) {
+    return res.status(503).json({ success: false, error: 'Telegram linking is not configured.' });
+  }
+  try {
+    const token = createOpaqueToken();
+    await pool.query(`DELETE FROM integration_link_tokens WHERE user_id = $1 AND provider = 'telegram'`, [req.user.id]);
+    await pool.query(
+      `INSERT INTO integration_link_tokens (token_hash, user_id, provider, expires_at)
+       VALUES ($1, $2, 'telegram', now() + interval '15 minutes')`,
+      [hashOpaqueToken(token), req.user.id]
+    );
+    return res.json({ success: true, url: `https://t.me/${encodeURIComponent(botUsername)}?start=${token}` });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not create Telegram link.' });
+  }
+});
+
+app.post('/me/integrations/discord/link', apiRateLimiter, requireAuth, async (req, res) => {
+  const clientId = process.env.DISCORD_CLIENT_ID;
+  const redirectUri = process.env.DISCORD_REDIRECT_URI;
+  if (!clientId || !process.env.DISCORD_CLIENT_SECRET || !redirectUri) {
+    return res.status(503).json({ success: false, error: 'Discord linking is not configured.' });
+  }
+  try {
+    const state = createOpaqueToken();
+    await pool.query(`DELETE FROM integration_link_tokens WHERE user_id = $1 AND provider = 'discord'`, [req.user.id]);
+    await pool.query(
+      `INSERT INTO integration_link_tokens (token_hash, user_id, provider, expires_at)
+       VALUES ($1, $2, 'discord', now() + interval '15 minutes')`,
+      [hashOpaqueToken(state), req.user.id]
+    );
+    const url = new URL('https://discord.com/oauth2/authorize');
+    url.searchParams.set('client_id', clientId);
+    url.searchParams.set('redirect_uri', redirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', 'identify');
+    url.searchParams.set('state', state);
+    return res.json({ success: true, url: url.toString() });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not create Discord link.' });
+  }
+});
+
+app.delete('/me/integrations/:provider', apiRateLimiter, requireAuth, async (req, res) => {
+  const { provider } = req.params;
+  if (!['telegram', 'discord'].includes(provider)) {
+    return res.status(400).json({ success: false, error: 'Unknown integration.' });
+  }
+  const column = provider === 'telegram' ? 'telegram_chat_id' : 'discord_user_id';
+  try {
+    await pool.query(`UPDATE users SET ${column} = NULL WHERE id = $1`, [req.user.id]);
+    await pool.query(
+      'UPDATE user_notification_preferences SET enabled = FALSE, updated_at = now() WHERE user_id = $1 AND channel = $2',
+      [req.user.id, provider]
+    );
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not unlink integration.' });
+  }
+});
+
+app.get('/integrations/discord/callback', async (req, res) => {
+  const state = String(req.query.state || '');
+  const code = String(req.query.code || '');
+  const failUrl = `${frontendBaseUrl()}/dashboard.html?discord=error`;
+  if (!state || !code || !process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_CLIENT_SECRET || !process.env.DISCORD_REDIRECT_URI) {
+    return res.redirect(failUrl);
+  }
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM integration_link_tokens
+       WHERE token_hash = $1 AND provider = 'discord' AND expires_at > now()
+       RETURNING user_id`,
+      [hashOpaqueToken(state)]
+    );
+    if (!rows[0]) return res.redirect(failUrl);
+
+    const tokenResponse = await fetch('https://discord.com/api/v10/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.DISCORD_CLIENT_ID,
+        client_secret: process.env.DISCORD_CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: process.env.DISCORD_REDIRECT_URI
+      })
+    });
+    const tokenData = await tokenResponse.json();
+    if (!tokenResponse.ok || !tokenData.access_token) return res.redirect(failUrl);
+    const profileResponse = await fetch('https://discord.com/api/v10/users/@me', {
+      headers: { Authorization: 'Bearer ' + tokenData.access_token }
+    });
+    const profile = await profileResponse.json();
+    if (!profileResponse.ok || !profile.id) return res.redirect(failUrl);
+    await pool.query('UPDATE users SET discord_user_id = $1 WHERE id = $2', [profile.id, rows[0].user_id]);
+    return res.redirect(`${frontendBaseUrl()}/dashboard.html?discord=linked`);
+  } catch (error) {
+    console.error('Discord linking failed:', error);
+    return res.redirect(failUrl);
+  }
+});
+
+app.post('/integrations/telegram/webhook', async (req, res) => {
+  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  const receivedSecret = req.get('x-telegram-bot-api-secret-token');
+  if (!expectedSecret || receivedSecret !== expectedSecret) return res.sendStatus(401);
+  const text = String(req.body?.message?.text || '');
+  const chatId = req.body?.message?.chat?.id;
+  const match = /^\/start\s+([a-f0-9]{64})$/i.exec(text.trim());
+  if (!match || chatId == null) return res.sendStatus(200);
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM integration_link_tokens
+       WHERE token_hash = $1 AND provider = 'telegram' AND expires_at > now()
+       RETURNING user_id`,
+      [hashOpaqueToken(match[1])]
+    );
+    if (rows[0]) {
+      await pool.query('UPDATE users SET telegram_chat_id = $1 WHERE id = $2', [String(chatId), rows[0].user_id]);
+      await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: 'Your account is now linked. You can manage notifications in your dashboard.' })
+      });
+    }
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('Telegram linking failed:', error);
+    return res.sendStatus(500);
   }
 });
 
@@ -1336,6 +1635,14 @@ app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
     }
 
     await recordCreditTransaction({ userId: req.user.id, amount, type: 'topup_demo', reason: `Demo top-up: ${packageId} package` });
+    await queueOptInNotifications({
+      userId: req.user.id,
+      eventKey: `demo-credit:${req.user.id}:${randomUUID()}`,
+      eventType: 'demo_credit_added',
+      subject: 'Demo credits added',
+      message: `Demo credits added for testing: ${amount} credits. No payment was processed.`,
+      link: `${frontendBaseUrl()}/dashboard.html`
+    });
 
     return res.json({ success: true, credits: toCreditsNumber(rows[0].credits), added: amount });
   } catch (error) {
@@ -1917,6 +2224,19 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
             await refundUserCredits(settlement.user_id, -difference);
           }
 
+          try {
+            await queueOptInNotifications({
+              userId: settlement.user_id,
+              eventKey: `generation-success:${taskId}`,
+              eventType: 'generation_success',
+              subject: 'Your generation is ready',
+              message: 'Your AI generation completed successfully. Open the result here:',
+              link: mediaOutput?.url || `${frontendBaseUrl()}/dashboard.html`
+            });
+          } catch (notificationError) {
+            console.error('Could not queue generation notification:', notificationError);
+          }
+
           if (settlement.user_id === req.user.id) {
             const { rows: balanceRows } = await pool.query('SELECT credits FROM users WHERE id = $1', [settlement.user_id]);
             settledCredits = balanceRows[0] ? toCreditsNumber(balanceRows[0].credits) : null;
@@ -1924,6 +2244,10 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
         }
       } catch (dbError) {
         console.error('Failed to update generation record on completion:', dbError);
+      }
+      if (settledCredits == null && ownerRecord.user_id === req.user.id) {
+        const { rows: balanceRows } = await pool.query('SELECT credits FROM users WHERE id = $1', [req.user.id]);
+        settledCredits = balanceRows[0] ? toCreditsNumber(balanceRows[0].credits) : null;
       }
 
       return res.json({
@@ -1972,6 +2296,10 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
     } catch (dbError) {
       console.error('Failed to update generation record on failure:', dbError);
     }
+    if (creditsAfterRefund == null && ownerRecord.user_id === req.user.id) {
+      const { rows: balanceRows } = await pool.query('SELECT credits FROM users WHERE id = $1', [req.user.id]);
+      creditsAfterRefund = balanceRows[0] ? toCreditsNumber(balanceRows[0].credits) : null;
+    }
 
     return res.status(200).json({
       success: false,
@@ -1989,10 +2317,76 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
   }
 });
 
+let generationCheckerRunning = false;
+
+async function checkPendingGenerations() {
+  if (!pool || generationCheckerRunning) return;
+  generationCheckerRunning = true;
+  try {
+    const { rows } = await pool.query(
+      `SELECT wiro_task_id, user_id, held_amount FROM generations
+       WHERE status = 'pending' AND created_at > now() - interval '7 days'
+       ORDER BY created_at ASC LIMIT 15`
+    );
+    for (const generation of rows) {
+      try {
+        const detail = await client.getTask({ taskid: generation.wiro_task_id });
+        const task = detail.result ? (detail.tasklist || [])[0] : null;
+        if (!task || isTaskPending(task)) continue;
+
+        if (task.pexit === '0') {
+          const outputs = normalizeTaskOutputs(task.outputs || []);
+          const taskCost = formatTaskCost(task);
+          const { rows: changed } = await pool.query(
+            `UPDATE generations SET status = 'completed', total_cost = $1, outputs = $2, completed_at = now()
+             WHERE wiro_task_id = $3 AND status = 'pending'
+             RETURNING user_id, held_amount`,
+            [taskCost.finalAmount, JSON.stringify(outputs), generation.wiro_task_id]
+          );
+          const completed = changed[0];
+          if (!completed) continue;
+          const held = toCreditsNumber(completed.held_amount);
+          const finalCost = Number.isFinite(taskCost.finalAmount) && taskCost.finalAmount > 0 ? taskCost.finalAmount : 0;
+          if (finalCost > held) await chargeAdditionalCredits(completed.user_id, finalCost - held);
+          else if (finalCost < held) await refundUserCredits(completed.user_id, held - finalCost);
+          try {
+            await queueOptInNotifications({
+              userId: completed.user_id,
+              eventKey: `generation-success:${generation.wiro_task_id}`,
+              eventType: 'generation_success',
+              subject: 'Your generation is ready',
+              message: 'Your AI generation completed successfully. Open the result here:',
+              link: outputs[0]?.url || `${frontendBaseUrl()}/dashboard.html`
+            });
+          } catch (error) {
+            console.error('Could not queue background generation notification:', error);
+          }
+        } else {
+          const { rows: changed } = await pool.query(
+            `UPDATE generations SET status = 'failed', completed_at = now()
+             WHERE wiro_task_id = $1 AND status = 'pending'
+             RETURNING user_id, held_amount`,
+            [generation.wiro_task_id]
+          );
+          if (changed[0]) await refundUserCredits(changed[0].user_id, toCreditsNumber(changed[0].held_amount));
+        }
+      } catch (error) {
+        console.error(`Could not check generation ${generation.wiro_task_id}:`, error);
+      }
+    }
+  } finally {
+    generationCheckerRunning = false;
+  }
+}
+
 app.listen(PORT, async () => {
   try {
     await ensurePgCryptoExtension();
     await initSchema();
+    await checkPendingGenerations();
+    await processNotificationOutbox();
+    setInterval(() => checkPendingGenerations(), 30_000);
+    setInterval(() => processNotificationOutbox().catch(error => console.error('Notification worker failed:', error)), 15_000);
   } catch (error) {
     console.error('Failed to initialize database schema:', error);
   }

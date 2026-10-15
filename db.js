@@ -57,6 +57,61 @@ export async function initSchema() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blacklisted BOOLEAN NOT NULL DEFAULT FALSE;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blacklist_reason TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram_chat_id TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_user_id TEXT;`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_telegram_chat_id_idx ON users (telegram_chat_id) WHERE telegram_chat_id IS NOT NULL;`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_discord_user_id_idx ON users (discord_user_id) WHERE discord_user_id IS NOT NULL;`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS account_tokens (
+      token_hash TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      purpose TEXT NOT NULL CHECK (purpose IN ('email_verification', 'password_reset')),
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS account_tokens_user_id_idx ON account_tokens (user_id);`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS integration_link_tokens (
+      token_hash TEXT PRIMARY KEY,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK (provider IN ('telegram', 'discord')),
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_notification_preferences (
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL CHECK (channel IN ('email', 'telegram', 'discord')),
+      event_type TEXT NOT NULL CHECK (event_type IN ('generation_success', 'demo_credit_added')),
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, channel, event_type)
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notification_outbox (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      event_key TEXT NOT NULL,
+      channel TEXT NOT NULL CHECK (channel IN ('email', 'telegram', 'discord')),
+      destination TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      message TEXT NOT NULL,
+      link TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sending', 'sent')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      sent_at TIMESTAMPTZ,
+      UNIQUE (event_key, channel)
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS notification_outbox_pending_idx ON notification_outbox (next_attempt_at) WHERE status = 'pending';`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS generations (
