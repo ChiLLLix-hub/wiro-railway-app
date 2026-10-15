@@ -119,36 +119,6 @@ async function consumeAccountToken(token, purpose) {
   return null;
 }
 
-async function createIntegrationToken(userId, provider) {
-  const token = createOpaqueToken();
-  const tokenHash = await hashPassword(token);
-  await pool.query(`DELETE FROM integration_link_tokens WHERE user_id = $1 AND provider = $2`, [userId, provider]);
-  await pool.query(
-    `INSERT INTO integration_link_tokens (token_hash, token_prefix, user_id, provider, expires_at)
-     VALUES ($1, $2, $3, $4, now() + interval '15 minutes')`,
-    [tokenHash, token.slice(0, 12), userId, provider]
-  );
-  return token;
-}
-
-async function consumeIntegrationToken(token, provider) {
-  if (!token) return null;
-  const { rows } = await pool.query(
-    `SELECT token_hash, user_id FROM integration_link_tokens
-     WHERE token_prefix = $1 AND provider = $2 AND expires_at > now()`,
-    [String(token).slice(0, 12), provider]
-  );
-  for (const candidate of rows) {
-    if (!(await verifyPassword(String(token), candidate.token_hash))) continue;
-    const { rows: consumed } = await pool.query(
-      `DELETE FROM integration_link_tokens WHERE token_hash = $1 AND expires_at > now() RETURNING user_id`,
-      [candidate.token_hash]
-    );
-    return consumed[0] || null;
-  }
-  return null;
-}
-
 async function queueAccountEmail(userId, email, purpose, token) {
   const verification = purpose === 'email_verification';
   const subject = verification ? 'Verify your email address' : 'Reset your password';
@@ -1417,28 +1387,28 @@ app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
   }
 });
 
-const NOTIFICATION_CHANNELS = ['email', 'telegram', 'discord'];
+const NOTIFICATION_CHANNELS = ['email'];
 const NOTIFICATION_EVENTS = ['generation_success', 'demo_credit_added'];
 
 app.get('/me/notification-settings', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const [{ rows: userRows }, { rows: preferenceRows }] = await Promise.all([
-      pool.query('SELECT email, email_verified, telegram_chat_id, discord_user_id FROM users WHERE id = $1', [req.user.id]),
+      pool.query('SELECT email, email_verified FROM users WHERE id = $1', [req.user.id]),
       pool.query('SELECT channel, event_type, enabled FROM user_notification_preferences WHERE user_id = $1', [req.user.id])
     ]);
     const preferences = Object.fromEntries(NOTIFICATION_CHANNELS.map(channel => [
       channel,
       Object.fromEntries(NOTIFICATION_EVENTS.map(event => [event, false]))
     ]));
-    for (const row of preferenceRows) preferences[row.channel][row.event_type] = row.enabled;
+    for (const row of preferenceRows) {
+      if (preferences[row.channel]) preferences[row.channel][row.event_type] = row.enabled;
+    }
     const user = userRows[0];
     return res.json({
       success: true,
       preferences,
       linked: {
-        email: Boolean(user?.email_verified),
-        telegram: Boolean(user?.telegram_chat_id),
-        discord: Boolean(user?.discord_user_id)
+        email: Boolean(user?.email_verified)
       },
       emailVerified: Boolean(user?.email_verified)
     });
@@ -1510,7 +1480,7 @@ app.put('/me/notification-settings', apiRateLimiter, requireAuth, async (req, re
   }
   try {
     const { rows: users } = await pool.query(
-      'SELECT email_verified, telegram_chat_id, discord_user_id FROM users WHERE id = $1',
+      'SELECT email_verified FROM users WHERE id = $1',
       [req.user.id]
     );
     const user = users[0];
@@ -1518,10 +1488,8 @@ app.put('/me/notification-settings', apiRateLimiter, requireAuth, async (req, re
       for (const event of NOTIFICATION_EVENTS) {
         const enabled = preferences[channel]?.[event];
         if (typeof enabled !== 'boolean') continue;
-        if (enabled && !(channel === 'email' ? user?.email_verified
-          : channel === 'telegram' ? user?.telegram_chat_id
-            : user?.discord_user_id)) {
-          return res.status(400).json({ success: false, error: `Link and verify ${channel} before enabling its notifications.` });
+        if (enabled && !user?.email_verified) {
+          return res.status(400).json({ success: false, error: 'Verify your email before enabling email notifications.' });
         }
         await pool.query(
           `INSERT INTO user_notification_preferences (user_id, channel, event_type, enabled)
@@ -1542,149 +1510,6 @@ app.put('/me/notification-settings', apiRateLimiter, requireAuth, async (req, re
     return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Could not save notification settings.' });
-  }
-});
-
-app.post('/me/integrations/telegram/link', apiRateLimiter, requireAuth, async (req, res) => {
-  const botUsername = String(process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, '');
-  if (!botUsername || !process.env.TELEGRAM_BOT_TOKEN) {
-    return res.status(503).json({ success: false, error: 'Telegram linking is not configured.' });
-  }
-  try {
-    const token = await createIntegrationToken(req.user.id, 'telegram');
-    return res.json({ success: true, url: `https://t.me/${encodeURIComponent(botUsername)}?start=${token}` });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: 'Could not create Telegram link.' });
-  }
-});
-
-app.put('/me/integrations/telegram', emailTestRateLimiter, requireAuth, async (req, res) => {
-  const chatId = String(req.body?.chatId || '').trim();
-  if (!/^\d{5,15}$/.test(chatId)) {
-    return res.status(400).json({ success: false, error: 'Enter your numeric Telegram ID (digits only).' });
-  }
-  if (!process.env.TELEGRAM_BOT_TOKEN) {
-    return res.status(503).json({ success: false, error: 'Telegram notifications are not configured.' });
-  }
-  try {
-    const tg = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: 'Telegram notifications are now enabled for your account. Generation results will be sent here.' }),
-      signal: AbortSignal.timeout(15_000)
-    });
-    if (!tg.ok) {
-      return res.status(400).json({ success: false, error: 'Could not message that Telegram ID. Open the bot in Telegram, press Start, then try again.' });
-    }
-    await pool.query('UPDATE users SET telegram_chat_id = $1 WHERE id = $2', [chatId, req.user.id]);
-    return res.json({ success: true });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: 'Could not save Telegram ID.' });
-  }
-});
-
-app.post('/me/integrations/discord/link', apiRateLimiter, requireAuth, async (req, res) => {
-  const clientId = process.env.DISCORD_CLIENT_ID;
-  const redirectUri = process.env.DISCORD_REDIRECT_URI;
-  if (!clientId || !process.env.DISCORD_CLIENT_SECRET || !redirectUri) {
-    return res.status(503).json({ success: false, error: 'Discord linking is not configured.' });
-  }
-  try {
-    const state = await createIntegrationToken(req.user.id, 'discord');
-    const url = new URL('https://discord.com/oauth2/authorize');
-    url.searchParams.set('client_id', clientId);
-    url.searchParams.set('redirect_uri', redirectUri);
-    url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', 'identify');
-    url.searchParams.set('state', state);
-    return res.json({ success: true, url: url.toString() });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: 'Could not create Discord link.' });
-  }
-});
-
-app.delete('/me/integrations/:provider', apiRateLimiter, requireAuth, async (req, res) => {
-  const { provider } = req.params;
-  if (!['telegram', 'discord'].includes(provider)) {
-    return res.status(400).json({ success: false, error: 'Unknown integration.' });
-  }
-  const column = provider === 'telegram' ? 'telegram_chat_id' : 'discord_user_id';
-  try {
-    await pool.query(`UPDATE users SET ${column} = NULL WHERE id = $1`, [req.user.id]);
-    await pool.query(
-      'UPDATE user_notification_preferences SET enabled = FALSE, updated_at = now() WHERE user_id = $1 AND channel = $2',
-      [req.user.id, provider]
-    );
-    await pool.query(
-      `DELETE FROM notification_outbox
-       WHERE user_id = $1 AND channel = $2 AND status IN ('pending', 'sending')`,
-      [req.user.id, provider]
-    );
-    return res.json({ success: true });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: 'Could not unlink integration.' });
-  }
-});
-
-app.get('/integrations/discord/callback', apiRateLimiter, async (req, res) => {
-  const state = String(req.query.state || '');
-  const code = String(req.query.code || '');
-  const failUrl = `${frontendBaseUrl()}/dashboard.html?discord=error`;
-  if (!state || !code || !process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_CLIENT_SECRET || !process.env.DISCORD_REDIRECT_URI) {
-    return res.redirect(failUrl);
-  }
-  try {
-    const link = await consumeIntegrationToken(state, 'discord');
-    if (!link) return res.redirect(failUrl);
-
-    const tokenResponse = await fetch('https://discord.com/api/v10/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: process.env.DISCORD_CLIENT_ID,
-        client_secret: process.env.DISCORD_CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: process.env.DISCORD_REDIRECT_URI
-      })
-    });
-    const tokenData = await tokenResponse.json();
-    if (!tokenResponse.ok || !tokenData.access_token) return res.redirect(failUrl);
-    const profileResponse = await fetch('https://discord.com/api/v10/users/@me', {
-      headers: { Authorization: 'Bearer ' + tokenData.access_token }
-    });
-    const profile = await profileResponse.json();
-    if (!profileResponse.ok || !profile.id) return res.redirect(failUrl);
-    await pool.query('UPDATE users SET discord_user_id = $1 WHERE id = $2', [profile.id, link.user_id]);
-    return res.redirect(`${frontendBaseUrl()}/dashboard.html?discord=linked`);
-  } catch (error) {
-    console.error('Discord linking failed:', error);
-    return res.redirect(failUrl);
-  }
-});
-
-app.post('/integrations/telegram/webhook', apiRateLimiter, async (req, res) => {
-  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  const receivedSecret = req.get('x-telegram-bot-api-secret-token');
-  if (!expectedSecret || receivedSecret !== expectedSecret) return res.sendStatus(401);
-  const text = String(req.body?.message?.text || '');
-  const chatId = req.body?.message?.chat?.id;
-  const match = /^\/start\s+([a-f0-9]{64})$/i.exec(text.trim());
-  if (!match || chatId == null || req.body?.message?.chat?.type !== 'private') return res.sendStatus(200);
-  try {
-    const link = await consumeIntegrationToken(match[1], 'telegram');
-    if (link) {
-      await pool.query('UPDATE users SET telegram_chat_id = $1 WHERE id = $2', [String(chatId), link.user_id]);
-      await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, text: 'Your account is now linked. You can manage notifications in your dashboard.' })
-      });
-    }
-    return res.sendStatus(200);
-  } catch (error) {
-    console.error('Telegram linking failed:', error);
-    return res.sendStatus(500);
   }
 });
 
