@@ -441,6 +441,7 @@
     } catch {
       return '';
     }
+
   }
 
   function setAuthToken(token) {
@@ -513,6 +514,14 @@
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) throw new Error(data.error || 'Login failed.');
     setAuthToken(data.token);
+    try {
+      const meRes = await authFetch(RAILWAY_ME_URL, { cache: 'no-store' });
+      const meData = await meRes.json().catch(() => ({}));
+      if (meRes.ok && meData.success) {
+        updateAuthUI(meData.user);
+        return meData.user;
+      }
+    } catch { /* Keep the login response's account details if the refresh is unavailable. */ }
     updateAuthUI(data.user);
     return data.user;
   }
@@ -582,6 +591,11 @@
   }
 
   const FILE_PARAM_TYPES = ['fileinput', 'multifileinput', 'combinefileinput'];
+  const REGENERATE_STORAGE_KEY = 'wiroRegeneratePreset';
+  let pendingGenerationPreset = null;
+  try {
+    pendingGenerationPreset = JSON.parse(sessionStorage.getItem(REGENERATE_STORAGE_KEY) || 'null');
+  } catch {}
 
   function isBackendSameOrigin() {
     try {
@@ -1438,7 +1452,6 @@
     resultCard.classList.add('hidden');
     promptInput.value = '';
     resetOutputDetails();
-    resetLookupResult();
 
     heroSectionEl?.classList.add('hidden');
     categoryNavSectionEl?.classList.add('hidden');
@@ -1630,6 +1643,7 @@
 
       const groups = Array.isArray(payload.parameters) ? payload.parameters : [];
       renderParamFields(groups);
+      applyGenerationPreset(model);
       renderEstimatedCost(payload.estimatedCost);
       threeDHint.classList.toggle('hidden', !isThreeDModel(payload.categories || model.categories));
       // The schema response's estimate was computed before field defaults
@@ -1874,10 +1888,13 @@
     previews.className = 'mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3';
 
     const existingUploadState = fileUploads[item.id];
+    const presetFiles = getPresetFilesForField(item, type);
     fileUploads[item.id] = {
       uploading: false,
       error: null,
-      files: existingUploadState && Array.isArray(existingUploadState.files) ? existingUploadState.files : []
+      files: existingUploadState && Array.isArray(existingUploadState.files)
+        ? existingUploadState.files
+        : presetFiles
     };
 
     function renderUploadState() {
@@ -1930,6 +1947,8 @@
         previews.appendChild(card);
       });
     }
+
+    renderUploadState();
 
     input.addEventListener('change', async () => {
       if (fileUploadAbortControllers[item.id]) {
@@ -2238,8 +2257,9 @@
     const model = allModels.find(m => m.slug === slug);
 
     if (model) {
-      selectedModel = model;
-      showModelView(model);
+      const preset = pendingGenerationPreset?.model === model.slug ? pendingGenerationPreset : null;
+      selectedModel = preset?.tag ? { ...model, tag: preset.tag } : model;
+      showModelView(selectedModel);
       return;
     }
 
@@ -2261,6 +2281,9 @@
       const url = new URL(RAILWAY_MODELS_URL);
       url.searchParams.set('search', projectPart);
       url.searchParams.set('limit', '50');
+      if (pendingGenerationPreset?.model === slug && pendingGenerationPreset.tag) {
+        url.searchParams.set('tag', pendingGenerationPreset.tag);
+      }
 
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Server returned status ${res.status}`);
@@ -2277,9 +2300,46 @@
   async function resolveModelBySlug(slug) {
     const match = await fetchModelBySlug(slug);
     if (match) {
-      selectedModel = match;
-      showModelView(match);
+      const preset = pendingGenerationPreset?.model === match.slug ? pendingGenerationPreset : null;
+      selectedModel = preset?.tag ? { ...match, tag: preset.tag } : match;
+      showModelView(selectedModel);
     }
+  }
+
+  function getPresetFilesForField(item, type) {
+    const preset = pendingGenerationPreset;
+    if (!preset || preset.model !== selectedModel?.slug || !preset.params) return [];
+    let values = type === 'combinefileinput'
+      ? preset.params[item.id]
+      : (preset.params[`${item.id}Url`] ?? preset.params[item.id]);
+    if (typeof values === 'string' && type === 'multifileinput') {
+      values = values.split(',').map(value => value.trim()).filter(Boolean);
+    }
+    if (typeof values === 'string') values = [values];
+    if (!Array.isArray(values)) return [];
+    return values.filter(value => typeof value === 'string' && value).map((url, index) => ({
+      name: `Reference ${index + 1}`,
+      url,
+      contentType: '',
+      size: null
+    }));
+  }
+
+  function applyGenerationPreset(model) {
+    const preset = pendingGenerationPreset;
+    if (!preset || preset.model !== model.slug) return;
+    promptInput.value = typeof preset.prompt === 'string' ? preset.prompt : '';
+    currentSchemaFields.forEach(item => {
+      if (FILE_PARAM_TYPES.includes((item.type || '').toLowerCase())) return;
+      const value = preset.params?.[item.id];
+      if (value == null) return;
+      const input = document.getElementById(`param-${item.id}`);
+      if (!input) return;
+      if (input.type === 'checkbox') input.checked = Boolean(value);
+      else input.value = String(value);
+    });
+    pendingGenerationPreset = null;
+    try { sessionStorage.removeItem(REGENERATE_STORAGE_KEY); } catch {}
   }
 
   // ------------------------------------------------------------------
