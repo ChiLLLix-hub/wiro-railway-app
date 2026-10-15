@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin Dashboard - Mygenx Studio</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google's <model-viewer> web component - renders glTF/GLB/USDZ 3D
+       generation outputs directly in the lookup result preview. -->
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
   <style>
     html { scroll-behavior: smooth; }
@@ -45,6 +48,11 @@
         <p class="text-xs text-slate-400">Revenue today / week / month</p>
         <p id="stat-revenue" class="text-sm font-semibold mt-1">-</p>
         <p class="text-xs text-slate-500 mt-1">Credit top-ups only (currently demo, not real payments).</p>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Credits spent today / week / month</p>
+        <p id="stat-spend" class="text-sm font-semibold mt-1">-</p>
+        <p class="text-xs text-slate-500 mt-1">Across all users, on completed generations only.</p>
       </div>
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
         <p class="text-xs text-slate-400">Total unused user credits</p>
@@ -113,6 +121,60 @@
           <tbody id="generations-tbody" class="divide-y divide-slate-800"></tbody>
         </table>
         <p id="generations-empty" class="hidden text-sm text-slate-500 py-4">No generations found.</p>
+      </div>
+    </section>
+
+    <!-- ==================== LOOK UP GENERATION BY TASK ID ==================== -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <h2 class="text-lg font-bold">Retrieve a Generation by Task ID</h2>
+      <p class="text-slate-400 text-xs">Look up any user's job/task ID to view its result, or the failure reason if it didn't succeed.</p>
+
+      <form id="lookup-form" class="flex flex-col sm:flex-row gap-2">
+        <input
+          id="lookup-task-id"
+          type="text"
+          required
+          placeholder="Paste job/task ID…"
+          class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+        />
+        <button
+          type="submit"
+          id="lookup-btn"
+          class="bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-sm py-2 px-5 rounded-lg transition disabled:opacity-50"
+        >Check Status</button>
+      </form>
+
+      <div id="lookup-status" class="hidden text-slate-400 text-xs"></div>
+
+      <div id="lookup-error-box" class="hidden bg-red-950/50 border border-red-500/50 text-red-300 text-sm rounded-xl p-4 space-y-2">
+        <p id="lookup-error-message" class="font-medium"></p>
+        <pre id="lookup-error-debug" class="hidden whitespace-pre-wrap break-words text-red-300/80 text-xs bg-red-950/40 border border-red-500/30 rounded-lg p-3"></pre>
+      </div>
+
+      <div id="lookup-result-container" class="hidden space-y-4 pt-1">
+        <div class="grid gap-3 md:grid-cols-2 text-sm">
+          <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+            <p class="text-xs uppercase tracking-wider text-slate-500">Job / Task ID</p>
+            <p id="lookup-task-id-display" class="mt-2 font-mono text-slate-200 break-all">—</p>
+          </div>
+          <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+            <p class="text-xs uppercase tracking-wider text-slate-500">Generation Cost</p>
+            <p id="lookup-task-cost" class="mt-2 text-slate-200">—</p>
+          </div>
+        </div>
+
+        <div id="lookup-media-wrapper" class="relative bg-slate-950 rounded-xl overflow-hidden border border-slate-800 aspect-square max-w-sm flex items-center justify-center"></div>
+
+        <div class="flex items-center justify-between text-sm pt-1">
+          <a id="lookup-download-link" href="" target="_blank" class="hidden text-blue-400 hover:underline">
+            Open Full File ↗
+          </a>
+        </div>
+
+        <div class="space-y-2">
+          <h3 class="text-xs uppercase tracking-wider font-semibold text-slate-400">Generated Files</h3>
+          <div id="lookup-downloads-list" class="space-y-2 text-sm text-slate-300"></div>
+        </div>
       </div>
     </section>
 
@@ -206,6 +268,7 @@
   const RAILWAY_ADMIN_TRANSACTIONS_URL = `${BACKEND_BASE_URL}/admin/transactions`;
   const RAILWAY_ADMIN_STATS_URL = `${BACKEND_BASE_URL}/admin/stats`;
   const RAILWAY_ADMIN_LOGIN_ATTEMPTS_URL = `${BACKEND_BASE_URL}/admin/login-attempts`;
+  const RAILWAY_TASK_URL = `${BACKEND_BASE_URL}/task`;
 
   const AUTH_TOKEN_STORAGE_KEY = 'wiroAuthToken';
 
@@ -264,6 +327,8 @@
     const { stats } = await fetchJson(RAILWAY_ADMIN_STATS_URL);
     document.getElementById('stat-revenue').textContent =
       `${formatCost(stats.revenueToday)} / ${formatCost(stats.revenueThisWeek)} / ${formatCost(stats.revenueThisMonth)}`;
+    document.getElementById('stat-spend').textContent =
+      `${formatCost(stats.spendToday)} / ${formatCost(stats.spendThisWeek)} / ${formatCost(stats.spendThisMonth)}`;
     document.getElementById('stat-unused-credits').textContent = formatCost(stats.totalUnusedCredits);
     document.getElementById('stat-users').textContent =
       `${stats.totalUsers} / ${stats.activeUsers} / ${stats.blacklistedUsers}`;
@@ -460,6 +525,215 @@
       tbody.appendChild(tr);
     }
   }
+
+  // ------------------------------------------------------------------
+  // Retrieve any user's finished (or failed) generation by job/task ID.
+  // Reuses GET /task/:taskId, which already allows an admin to fetch any
+  // task regardless of who owns it (see index.js ownership check).
+  // ------------------------------------------------------------------
+  const lookupForm = document.getElementById('lookup-form');
+  const lookupTaskIdInput = document.getElementById('lookup-task-id');
+  const lookupBtn = document.getElementById('lookup-btn');
+  const lookupStatus = document.getElementById('lookup-status');
+  const lookupErrorBox = document.getElementById('lookup-error-box');
+  const lookupErrorMessage = document.getElementById('lookup-error-message');
+  const lookupErrorDebug = document.getElementById('lookup-error-debug');
+  const lookupResultContainer = document.getElementById('lookup-result-container');
+  const lookupTaskIdDisplay = document.getElementById('lookup-task-id-display');
+  const lookupTaskCostEl = document.getElementById('lookup-task-cost');
+  const lookupMediaWrapper = document.getElementById('lookup-media-wrapper');
+  const lookupDownloadLink = document.getElementById('lookup-download-link');
+  const lookupDownloadsList = document.getElementById('lookup-downloads-list');
+
+  function extractMediaUrl(data) {
+    if (data.mediaUrl) return data.mediaUrl;
+
+    const outputs = data.outputs || (data.task && data.task.outputs) || [];
+    const outputWithUrl = outputs.find(o => o && o.url);
+    if (outputWithUrl) return outputWithUrl.url;
+
+    let raw = data.output || (data.task && data.task.debugoutput);
+    if (!raw) return null;
+
+    if (typeof raw === 'object') {
+      return raw.url || raw.video || raw.image || raw.file || (Array.isArray(raw) ? raw[0] : null);
+    }
+    if (typeof raw === 'string') {
+      if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+      try {
+        const parsed = JSON.parse(raw);
+        return parsed.url || parsed.video || parsed.image || parsed.file || (Array.isArray(parsed) ? parsed[0] : null);
+      } catch (e) {
+        const match = raw.match(/https?:\/\/[^\s"']+/);
+        return match ? match[0] : null;
+      }
+    }
+    return null;
+  }
+
+  function getDownloadableOutputs(data) {
+    const directDownloads = Array.isArray(data.downloads) ? data.downloads : [];
+    if (directDownloads.length > 0) {
+      return directDownloads.filter(item => item && item.url);
+    }
+    const outputs = data.outputs || (data.task && data.task.outputs) || [];
+    return outputs
+      .filter(output => output && output.url)
+      .map((output, index) => ({
+        id: `${output.name || 'output'}-${index + 1}`,
+        name: output.name || `Output ${index + 1}`,
+        url: output.url,
+        contentType: output.contenttype || output.contentType || 'application/octet-stream',
+        size: output.size || null
+      }));
+  }
+
+  const MODEL_VIEWER_EXTENSIONS = ['glb', 'gltf', 'usdz'];
+  function get3DExtension(url) {
+    const clean = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(String(url || ''));
+    const ext = (clean && clean[1] || '').toLowerCase();
+    return MODEL_VIEWER_EXTENSIONS.includes(ext) ? ext : null;
+  }
+
+  function render3DModel(url, wrapper) {
+    const viewer = document.createElement('model-viewer');
+    viewer.setAttribute('src', url);
+    viewer.setAttribute('camera-controls', '');
+    viewer.setAttribute('touch-action', 'pan-y');
+    viewer.setAttribute('auto-rotate', '');
+    viewer.setAttribute('shadow-intensity', '1');
+    viewer.setAttribute('exposure', '1');
+    viewer.setAttribute('ar', '');
+    viewer.setAttribute('alt', 'Generated 3D model - drag to orbit, scroll/pinch to zoom');
+    viewer.className = 'w-full h-full bg-slate-950';
+    viewer.style.setProperty('--poster-color', 'transparent');
+    wrapper.appendChild(viewer);
+  }
+
+  function renderMedia(url, wrapper) {
+    wrapper.innerHTML = '';
+    const model3DExt = get3DExtension(url);
+    if (model3DExt) {
+      render3DModel(url, wrapper);
+      return;
+    }
+    const isVideo = url.endsWith('.mp4') || url.endsWith('.webm') || url.includes('/video');
+    if (isVideo) {
+      const video = document.createElement('video');
+      video.src = url;
+      video.controls = true;
+      video.autoplay = true;
+      video.loop = true;
+      video.className = 'w-full h-full object-cover';
+      wrapper.appendChild(video);
+    } else {
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = 'Generated Output';
+      img.className = 'w-full h-full object-cover';
+      wrapper.appendChild(img);
+    }
+  }
+
+  function resetLookupResult() {
+    lookupStatus.classList.add('hidden');
+    lookupStatus.textContent = '';
+    lookupErrorBox.classList.add('hidden');
+    lookupErrorMessage.textContent = '';
+    lookupErrorDebug.textContent = '';
+    lookupErrorDebug.classList.add('hidden');
+    lookupResultContainer.classList.add('hidden');
+    lookupTaskIdDisplay.textContent = '—';
+    lookupTaskCostEl.textContent = '—';
+    lookupMediaWrapper.innerHTML = '';
+    lookupDownloadLink.classList.add('hidden');
+    lookupDownloadLink.removeAttribute('href');
+    lookupDownloadsList.innerHTML = '';
+  }
+
+  function renderLookupResult(data) {
+    const downloads = getDownloadableOutputs(data);
+    const mediaUrl = extractMediaUrl(data);
+    const primaryDownloadUrl = mediaUrl || (downloads[0] && downloads[0].url) || '';
+
+    lookupTaskIdDisplay.textContent = data.taskId || (data.task && data.task.id) || '—';
+    lookupTaskCostEl.textContent = data.finalCostDisplay ?? '—';
+
+    if (mediaUrl) {
+      renderMedia(mediaUrl, lookupMediaWrapper);
+    } else {
+      lookupMediaWrapper.innerHTML = '<p class="px-6 text-center text-sm text-slate-400">No preview available, but the generated file links are ready below.</p>';
+    }
+
+    lookupDownloadLink.classList.toggle('hidden', !primaryDownloadUrl);
+    lookupDownloadLink.href = primaryDownloadUrl;
+
+    lookupDownloadsList.innerHTML = '';
+    if (downloads.length === 0) {
+      lookupDownloadsList.innerHTML = '<p class="text-slate-500">No download files were returned for this task.</p>';
+    } else {
+      downloads.forEach((download, index) => {
+        const item = document.createElement('a');
+        item.href = download.url;
+        item.target = '_blank';
+        item.rel = 'noopener noreferrer';
+        item.className = 'flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 hover:border-slate-700';
+        item.innerHTML = `
+          <span>
+            <span class="block text-slate-100">${escapeHtml(download.name || `Output ${index + 1}`)}</span>
+            <span class="block text-xs text-slate-500">${escapeHtml(download.contentType || 'application/octet-stream')}</span>
+          </span>
+          <span class="text-blue-400">Open ↗</span>
+        `;
+        lookupDownloadsList.appendChild(item);
+      });
+    }
+
+    lookupResultContainer.classList.remove('hidden');
+  }
+
+  lookupForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const taskId = lookupTaskIdInput.value.trim();
+    if (!taskId) return;
+
+    resetLookupResult();
+    lookupBtn.disabled = true;
+    lookupBtn.textContent = 'Checking…';
+    lookupStatus.classList.remove('hidden');
+    lookupStatus.textContent = 'Looking up task…';
+
+    try {
+      const response = await authFetch(`${RAILWAY_TASK_URL}/${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+      const data = await response.json();
+      lookupStatus.classList.add('hidden');
+
+      if (data.pending) {
+        lookupStatus.classList.remove('hidden');
+        lookupStatus.textContent = data.error || 'This task is still queued or running. Please check again shortly.';
+        return;
+      }
+
+      if (response.ok && data.success) {
+        renderLookupResult(data);
+      } else {
+        lookupErrorMessage.textContent = data.error || 'Could not find a generation for this job/task ID.';
+        if (data.debugOutput && String(data.debugOutput).trim()) {
+          lookupErrorDebug.textContent = String(data.debugOutput).trim();
+          lookupErrorDebug.classList.remove('hidden');
+        }
+        lookupErrorBox.classList.remove('hidden');
+      }
+    } catch (err) {
+      lookupStatus.classList.add('hidden');
+      lookupErrorMessage.textContent = 'Network error or server unreachable while looking up this task.';
+      lookupErrorBox.classList.remove('hidden');
+    } finally {
+      lookupBtn.disabled = false;
+      lookupBtn.textContent = 'Check Status';
+    }
+  });
 
   let usersSearchTimer = null;
   document.getElementById('users-search').addEventListener('input', (e) => {
