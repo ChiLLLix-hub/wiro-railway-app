@@ -7,7 +7,7 @@ import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
 import { hashPassword, verifyPassword, issueToken, requireAuth, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt, markUserLoggedIn } from './auth.js';
-import { frontendBaseUrl, processNotificationOutbox, queueMail, queueOptInNotifications, sendTestEmail } from './notifications.js';
+import { frontendBaseUrl, processNotificationOutbox, queueMail, queueOptInNotifications } from './notifications.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -46,14 +46,6 @@ const apiRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'Too many requests. Please slow down.' }
-});
-
-const emailTestRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 3,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { success: false, error: 'Too many email tests. Please try again later.' }
 });
 
 // Health check endpoint
@@ -1414,62 +1406,6 @@ app.get('/me/notification-settings', apiRateLimiter, requireAuth, async (req, re
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Could not load notification settings.' });
-  }
-});
-
-app.post('/me/email-test', emailTestRateLimiter, requireAuth, async (req, res) => {
-  const subject = String(req.body?.subject || '').trim();
-  const message = String(req.body?.message || '').trim();
-  if (!subject || subject.length > 120) {
-    return res.status(400).json({ success: false, error: 'Enter a subject of 1–120 characters.' });
-  }
-  if (!message || message.length > 2000) {
-    return res.status(400).json({ success: false, error: 'Enter a message of 1–2,000 characters.' });
-  }
-
-  let user;
-  try {
-    const { rows } = await pool.query(
-      'SELECT email, email_verified FROM users WHERE id = $1',
-      [req.user.id]
-    );
-    user = rows[0];
-  } catch (error) {
-    console.error('Could not load account email for SMTP test:', error.message);
-    return res.status(500).json({ success: false, error: 'Could not check the account email.' });
-  }
-  if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
-  if (!user.email_verified) {
-    return res.status(400).json({ success: false, error: 'Verify your account email before testing delivery.' });
-  }
-
-  try {
-    await sendTestEmail({ to: user.email, subject, message });
-    return res.json({ success: true, message: `Test email sent to ${user.email}. Check your inbox and spam folder.` });
-  } catch (error) {
-    const code = String(error.code || 'SMTP_DELIVERY_FAILED').slice(0, 40);
-    const diagnostics = {
-      code,
-      message: code === 'EMAIL_NOT_CONFIGURED'
-        ? error.message
-        : code === 'RESEND_AUTH'
-          ? 'Resend rejected the API key. Check RESEND_API_KEY on this service.'
-          : code === 'RESEND_REJECTED'
-            ? 'Resend rejected the message. Verify your sending domain in Resend and that EMAIL_FROM uses it.'
-        : ['ETIMEDOUT', 'ESOCKET', 'ECONNECTION', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EHOSTUNREACH'].includes(code)
-          ? 'The SMTP connection failed. Confirm the SMTP host and port, implicit TLS on port 465, and that the mail host allows connections from Railway.'
-          : code === 'EAUTH'
-            ? 'The mail server rejected authentication. Check the SMTP username and mailbox password.'
-            : code === 'EENVELOPE'
-              ? 'The SMTP server rejected the sender or recipient. Confirm the verified account address and EMAIL_FROM settings.'
-              : 'SMTP could not deliver the test message. Check the server logs and SMTP provider settings.'
-    };
-    console.error('SMTP email test failed:', { code });
-    return res.status(502).json({
-      success: false,
-      error: 'Email test failed.',
-      diagnostics
-    });
   }
 });
 
