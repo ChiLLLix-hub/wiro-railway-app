@@ -129,7 +129,9 @@ export async function initSchema() {
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       wiro_task_id TEXT NOT NULL,
       model_slug TEXT,
+      model_tag TEXT,
       prompt TEXT,
+      params JSONB,
       status TEXT NOT NULL DEFAULT 'pending',
       held_amount NUMERIC,
       total_cost NUMERIC,
@@ -144,6 +146,8 @@ export async function initSchema() {
   // the difference against) once the task finishes, even on databases
   // created before this column existed.
   await pool.query(`ALTER TABLE generations ADD COLUMN IF NOT EXISTS held_amount NUMERIC;`);
+  await pool.query(`ALTER TABLE generations ADD COLUMN IF NOT EXISTS model_tag TEXT;`);
+  await pool.query(`ALTER TABLE generations ADD COLUMN IF NOT EXISTS params JSONB;`);
   await pool.query(`ALTER TABLE generations ADD COLUMN IF NOT EXISTS last_polled_at TIMESTAMPTZ;`);
 
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS generations_wiro_task_id_idx ON generations (wiro_task_id);`);

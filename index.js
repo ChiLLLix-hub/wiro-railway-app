@@ -1683,7 +1683,7 @@ app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
 app.get('/me/generations', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, wiro_task_id, model_slug, prompt, status, total_cost, held_amount, outputs, created_at, completed_at
+      `SELECT id, wiro_task_id, model_slug, model_tag, prompt, params, status, total_cost, held_amount, outputs, created_at, completed_at
        FROM generations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
       [req.user.id]
     );
@@ -2088,10 +2088,10 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
     // difference) against exactly what was put on hold for this job.
     try {
       await pool.query(
-        `INSERT INTO generations (user_id, wiro_task_id, model_slug, prompt, status, held_amount)
-         VALUES ($1, $2, $3, $4, 'pending', $5)
+        `INSERT INTO generations (user_id, wiro_task_id, model_slug, model_tag, prompt, params, status, held_amount)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
          ON CONFLICT (wiro_task_id) DO NOTHING`,
-        [req.user.id, run.taskid, selectedModel, options.prompt, heldAmount]
+        [req.user.id, run.taskid, selectedModel, tag || null, options.prompt, rest, heldAmount]
       );
     } catch (dbError) {
       // Don't fail the whole generation if the ownership record can't be
