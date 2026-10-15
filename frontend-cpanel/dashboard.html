@@ -95,7 +95,7 @@
               <th class="py-3 pr-4 font-medium">Telegram</th>
               <td class="py-3 pr-4"><input type="checkbox" data-channel="telegram" data-event="generation_success" class="notification-pref h-4 w-4 accent-blue-500"></td>
               <td class="py-3 pr-4"><input type="checkbox" data-channel="telegram" data-event="demo_credit_added" class="notification-pref h-4 w-4 accent-blue-500"></td>
-              <td class="py-3 text-xs"><button id="telegram-link-btn" type="button" class="text-blue-400 hover:underline">Link bot</button><button id="telegram-unlink-btn" type="button" class="hidden text-red-400 hover:underline">Unlink</button></td>
+              <td class="py-3 text-xs"><button id="telegram-link-btn" type="button" class="text-blue-400 hover:underline">Link bot</button> <button id="telegram-id-btn" type="button" class="text-blue-400 hover:underline">Enter ID</button><button id="telegram-unlink-btn" type="button" class="hidden text-red-400 hover:underline">Unlink</button></td>
             </tr>
             <tr>
               <th class="py-3 pr-4 font-medium">Discord DM</th>
@@ -229,6 +229,7 @@
       checkbox.disabled = !linked;
     }
     document.getElementById('telegram-link-btn').classList.toggle('hidden', data.linked.telegram);
+    document.getElementById('telegram-id-btn').classList.toggle('hidden', data.linked.telegram);
     document.getElementById('telegram-unlink-btn').classList.toggle('hidden', !data.linked.telegram);
     document.getElementById('discord-link-btn').classList.toggle('hidden', data.linked.discord);
     document.getElementById('discord-unlink-btn').classList.toggle('hidden', !data.linked.discord);
@@ -429,6 +430,22 @@
   document.getElementById('telegram-link-btn').addEventListener('click', () => linkIntegration('telegram').catch(error => {
     document.getElementById('notification-settings-status').textContent = error.message;
   }));
+  document.getElementById('telegram-id-btn').addEventListener('click', async () => {
+    const status = document.getElementById('notification-settings-status');
+    const chatId = window.prompt('Enter your numeric Telegram ID. First open the bot in Telegram and press Start so it can message you.');
+    if (!chatId) return;
+    try {
+      await authJson(`${BACKEND_BASE_URL}/me/integrations/telegram`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId })
+      });
+      await loadNotificationSettings();
+      status.textContent = 'Telegram ID saved. Enable the notifications you want.';
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
   document.getElementById('discord-link-btn').addEventListener('click', () => linkIntegration('discord').catch(error => {
     document.getElementById('notification-settings-status').textContent = error.message;
   }));
