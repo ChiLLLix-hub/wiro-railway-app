@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
-import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
@@ -73,28 +73,72 @@ const upload = multer({
 // CURRENCY_SYMBOL to change the displayed label (defaults to "RM").
 const CURRENCY_EXCHANGE_RATE = Number(process.env.CURRENCY_EXCHANGE);
 const CURRENCY_SYMBOL = process.env.CURRENCY_SYMBOL || 'RM';
-const TOKEN_HASH_SECRET = process.env.TOKEN_HASH_SECRET || process.env.JWT_SECRET || randomBytes(32).toString('hex');
 
 function createOpaqueToken() {
   return randomBytes(32).toString('hex');
 }
 
-function hashOpaqueToken(token) {
-  return createHmac('sha256', TOKEN_HASH_SECRET).update(String(token)).digest('hex');
-}
-
 async function createAccountToken(userId, purpose, lifetimeHours) {
   const token = createOpaqueToken();
+  const tokenHash = await hashPassword(token);
   await pool.query(
     `DELETE FROM account_tokens WHERE user_id = $1 AND purpose = $2`,
     [userId, purpose]
   );
   await pool.query(
-    `INSERT INTO account_tokens (token_hash, user_id, purpose, expires_at)
-     VALUES ($1, $2, $3, now() + ($4 * interval '1 hour'))`,
-    [hashOpaqueToken(token), userId, purpose, lifetimeHours]
+    `INSERT INTO account_tokens (token_hash, token_prefix, user_id, purpose, expires_at)
+     VALUES ($1, $2, $3, $4, now() + ($5 * interval '1 hour'))`,
+    [tokenHash, token.slice(0, 12), userId, purpose, lifetimeHours]
   );
   return token;
+}
+
+async function consumeAccountToken(token, purpose) {
+  if (!token) return null;
+  const { rows } = await pool.query(
+    `SELECT token_hash, user_id FROM account_tokens
+     WHERE token_prefix = $1 AND purpose = $2 AND expires_at > now()`,
+    [String(token).slice(0, 12), purpose]
+  );
+  for (const candidate of rows) {
+    if (!(await verifyPassword(String(token), candidate.token_hash))) continue;
+    const { rows: consumed } = await pool.query(
+      `DELETE FROM account_tokens WHERE token_hash = $1 AND expires_at > now() RETURNING user_id`,
+      [candidate.token_hash]
+    );
+    return consumed[0] || null;
+  }
+  return null;
+}
+
+async function createIntegrationToken(userId, provider) {
+  const token = createOpaqueToken();
+  const tokenHash = await hashPassword(token);
+  await pool.query(`DELETE FROM integration_link_tokens WHERE user_id = $1 AND provider = $2`, [userId, provider]);
+  await pool.query(
+    `INSERT INTO integration_link_tokens (token_hash, token_prefix, user_id, provider, expires_at)
+     VALUES ($1, $2, $3, $4, now() + interval '15 minutes')`,
+    [tokenHash, token.slice(0, 12), userId, provider]
+  );
+  return token;
+}
+
+async function consumeIntegrationToken(token, provider) {
+  if (!token) return null;
+  const { rows } = await pool.query(
+    `SELECT token_hash, user_id FROM integration_link_tokens
+     WHERE token_prefix = $1 AND provider = $2 AND expires_at > now()`,
+    [String(token).slice(0, 12), provider]
+  );
+  for (const candidate of rows) {
+    if (!(await verifyPassword(String(token), candidate.token_hash))) continue;
+    const { rows: consumed } = await pool.query(
+      `DELETE FROM integration_link_tokens WHERE token_hash = $1 AND expires_at > now() RETURNING user_id`,
+      [candidate.token_hash]
+    );
+    return consumed[0] || null;
+  }
+  return null;
 }
 
 async function queueAccountEmail(userId, email, purpose, token) {
@@ -108,7 +152,7 @@ async function queueAccountEmail(userId, email, purpose, token) {
     : 'Use this link to reset your password. If you did not request a reset, you can ignore this email.';
   await queueMail({
     userId,
-    eventKey: `${purpose}:${userId}:${hashOpaqueToken(token)}`,
+    eventKey: `${purpose}:${userId}:${randomUUID()}`,
     to: email,
     subject,
     message,
@@ -1301,14 +1345,9 @@ app.post('/auth/verify-email', authRateLimiter, async (req, res) => {
   if (!isDbConfigured()) return res.status(503).json({ success: false, error: 'Accounts are not configured on this server.' });
   try {
     const token = String(req.body?.token || '');
-    const { rows } = await pool.query(
-      `DELETE FROM account_tokens
-       WHERE token_hash = $1 AND purpose = 'email_verification' AND expires_at > now()
-       RETURNING user_id`,
-      [hashOpaqueToken(token)]
-    );
-    if (!rows[0]) return res.status(400).json({ success: false, error: 'This verification link is invalid or expired.' });
-    await pool.query('UPDATE users SET email_verified = TRUE, updated_at = now() WHERE id = $1', [rows[0].user_id]);
+    const verified = await consumeAccountToken(token, 'email_verification');
+    if (!verified) return res.status(400).json({ success: false, error: 'This verification link is invalid or expired.' });
+    await pool.query('UPDATE users SET email_verified = TRUE, updated_at = now() WHERE id = $1', [verified.user_id]);
     return res.json({ success: true, message: 'Email verified. You can now log in.' });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Could not verify email.' });
@@ -1338,15 +1377,10 @@ app.post('/auth/reset-password', authRateLimiter, async (req, res) => {
   const password = String(req.body?.password || '');
   if (password.length < 8) return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
   try {
-    const { rows } = await pool.query(
-      `DELETE FROM account_tokens
-       WHERE token_hash = $1 AND purpose = 'password_reset' AND expires_at > now()
-       RETURNING user_id`,
-      [hashOpaqueToken(token)]
-    );
-    if (!rows[0]) return res.status(400).json({ success: false, error: 'This password-reset link is invalid or expired.' });
+    const reset = await consumeAccountToken(token, 'password_reset');
+    if (!reset) return res.status(400).json({ success: false, error: 'This password-reset link is invalid or expired.' });
     const passwordHash = await hashPassword(password);
-    await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [passwordHash, rows[0].user_id]);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [passwordHash, reset.user_id]);
     return res.json({ success: true, message: 'Password updated. You can now log in.' });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Could not reset password.' });
@@ -1453,13 +1487,7 @@ app.post('/me/integrations/telegram/link', apiRateLimiter, requireAuth, async (r
     return res.status(503).json({ success: false, error: 'Telegram linking is not configured.' });
   }
   try {
-    const token = createOpaqueToken();
-    await pool.query(`DELETE FROM integration_link_tokens WHERE user_id = $1 AND provider = 'telegram'`, [req.user.id]);
-    await pool.query(
-      `INSERT INTO integration_link_tokens (token_hash, user_id, provider, expires_at)
-       VALUES ($1, $2, 'telegram', now() + interval '15 minutes')`,
-      [hashOpaqueToken(token), req.user.id]
-    );
+    const token = await createIntegrationToken(req.user.id, 'telegram');
     return res.json({ success: true, url: `https://t.me/${encodeURIComponent(botUsername)}?start=${token}` });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Could not create Telegram link.' });
@@ -1473,13 +1501,7 @@ app.post('/me/integrations/discord/link', apiRateLimiter, requireAuth, async (re
     return res.status(503).json({ success: false, error: 'Discord linking is not configured.' });
   }
   try {
-    const state = createOpaqueToken();
-    await pool.query(`DELETE FROM integration_link_tokens WHERE user_id = $1 AND provider = 'discord'`, [req.user.id]);
-    await pool.query(
-      `INSERT INTO integration_link_tokens (token_hash, user_id, provider, expires_at)
-       VALUES ($1, $2, 'discord', now() + interval '15 minutes')`,
-      [hashOpaqueToken(state), req.user.id]
-    );
+    const state = await createIntegrationToken(req.user.id, 'discord');
     const url = new URL('https://discord.com/oauth2/authorize');
     url.searchParams.set('client_id', clientId);
     url.searchParams.set('redirect_uri', redirectUri);
@@ -1523,13 +1545,8 @@ app.get('/integrations/discord/callback', apiRateLimiter, async (req, res) => {
     return res.redirect(failUrl);
   }
   try {
-    const { rows } = await pool.query(
-      `DELETE FROM integration_link_tokens
-       WHERE token_hash = $1 AND provider = 'discord' AND expires_at > now()
-       RETURNING user_id`,
-      [hashOpaqueToken(state)]
-    );
-    if (!rows[0]) return res.redirect(failUrl);
+    const link = await consumeIntegrationToken(state, 'discord');
+    if (!link) return res.redirect(failUrl);
 
     const tokenResponse = await fetch('https://discord.com/api/v10/oauth2/token', {
       method: 'POST',
@@ -1549,7 +1566,7 @@ app.get('/integrations/discord/callback', apiRateLimiter, async (req, res) => {
     });
     const profile = await profileResponse.json();
     if (!profileResponse.ok || !profile.id) return res.redirect(failUrl);
-    await pool.query('UPDATE users SET discord_user_id = $1 WHERE id = $2', [profile.id, rows[0].user_id]);
+    await pool.query('UPDATE users SET discord_user_id = $1 WHERE id = $2', [profile.id, link.user_id]);
     return res.redirect(`${frontendBaseUrl()}/dashboard.html?discord=linked`);
   } catch (error) {
     console.error('Discord linking failed:', error);
@@ -1566,14 +1583,9 @@ app.post('/integrations/telegram/webhook', apiRateLimiter, async (req, res) => {
   const match = /^\/start\s+([a-f0-9]{64})$/i.exec(text.trim());
   if (!match || chatId == null || req.body?.message?.chat?.type !== 'private') return res.sendStatus(200);
   try {
-    const { rows } = await pool.query(
-      `DELETE FROM integration_link_tokens
-       WHERE token_hash = $1 AND provider = 'telegram' AND expires_at > now()
-       RETURNING user_id`,
-      [hashOpaqueToken(match[1])]
-    );
-    if (rows[0]) {
-      await pool.query('UPDATE users SET telegram_chat_id = $1 WHERE id = $2', [String(chatId), rows[0].user_id]);
+    const link = await consumeIntegrationToken(match[1], 'telegram');
+    if (link) {
+      await pool.query('UPDATE users SET telegram_chat_id = $1 WHERE id = $2', [String(chatId), link.user_id]);
       await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -66,22 +66,28 @@ export async function initSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS account_tokens (
       token_hash TEXT PRIMARY KEY,
+      token_prefix TEXT NOT NULL,
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       purpose TEXT NOT NULL CHECK (purpose IN ('email_verification', 'password_reset')),
       expires_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+  await pool.query(`ALTER TABLE account_tokens ADD COLUMN IF NOT EXISTS token_prefix TEXT;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS account_tokens_lookup_idx ON account_tokens (purpose, token_prefix, expires_at);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS account_tokens_user_id_idx ON account_tokens (user_id);`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS integration_link_tokens (
       token_hash TEXT PRIMARY KEY,
+      token_prefix TEXT NOT NULL,
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       provider TEXT NOT NULL CHECK (provider IN ('telegram', 'discord')),
       expires_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+  await pool.query(`ALTER TABLE integration_link_tokens ADD COLUMN IF NOT EXISTS token_prefix TEXT;`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS integration_link_tokens_lookup_idx ON integration_link_tokens (provider, token_prefix, expires_at);`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_notification_preferences (
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
