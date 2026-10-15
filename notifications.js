@@ -8,9 +8,27 @@ const mailTransport = smtpHost && process.env.SMTP_USER && process.env.SMTP_PASS
       host: smtpHost,
       port: smtpPort,
       secure: smtpPort === 465,
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD }
     })
   : null;
+
+export async function sendTestEmail({ to, subject, message }) {
+  if (!mailTransport || !process.env.EMAIL_FROM) {
+    throw Object.assign(
+      new Error('SMTP delivery is not configured. Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and EMAIL_FROM.'),
+      { code: 'EMAIL_NOT_CONFIGURED' }
+    );
+  }
+  return mailTransport.sendMail({
+    from: process.env.EMAIL_FROM,
+    to,
+    subject,
+    text: message
+  });
+}
 
 export async function queueMail({ userId, eventKey, to, subject, message, link }) {
   await pool.query(
