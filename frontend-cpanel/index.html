@@ -442,43 +442,6 @@
       return '';
     }
 
-    renderUploadState();
-  }
-
-  function getPresetFilesForField(item, type) {
-    const preset = pendingGenerationPreset;
-    if (!preset || preset.model !== selectedModel?.slug || !preset.params) return [];
-    let values = type === 'combinefileinput'
-      ? preset.params[item.id]
-      : (preset.params[`${item.id}Url`] ?? preset.params[item.id]);
-    if (typeof values === 'string' && type === 'multifileinput') {
-      values = values.split(',').map(value => value.trim()).filter(Boolean);
-    }
-    if (typeof values === 'string') values = [values];
-    if (!Array.isArray(values)) return [];
-    return values.filter(value => typeof value === 'string' && value).map((url, index) => ({
-      name: `Reference ${index + 1}`,
-      url,
-      contentType: '',
-      size: null
-    }));
-  }
-
-  function applyGenerationPreset(model) {
-    const preset = pendingGenerationPreset;
-    if (!preset || preset.model !== model.slug) return;
-    promptInput.value = typeof preset.prompt === 'string' ? preset.prompt : '';
-    currentSchemaFields.forEach(item => {
-      if (FILE_PARAM_TYPES.includes((item.type || '').toLowerCase())) return;
-      const value = preset.params?.[item.id];
-      if (value == null) return;
-      const input = document.getElementById(`param-${item.id}`);
-      if (!input) return;
-      if (input.type === 'checkbox') input.checked = Boolean(value);
-      else input.value = String(value);
-    });
-    pendingGenerationPreset = null;
-    sessionStorage.removeItem(REGENERATE_STORAGE_KEY);
   }
 
   function setAuthToken(token) {
@@ -551,8 +514,15 @@
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) throw new Error(data.error || 'Login failed.');
     setAuthToken(data.token);
+    try {
+      const meRes = await authFetch(RAILWAY_ME_URL, { cache: 'no-store' });
+      const meData = await meRes.json().catch(() => ({}));
+      if (meRes.ok && meData.success) {
+        updateAuthUI(meData.user);
+        return meData.user;
+      }
+    } catch { /* Keep the login response's account details if the refresh is unavailable. */ }
     updateAuthUI(data.user);
-    await refreshAuthUIFromServer();
     return data.user;
   }
 
@@ -625,9 +595,7 @@
   let pendingGenerationPreset = null;
   try {
     pendingGenerationPreset = JSON.parse(sessionStorage.getItem(REGENERATE_STORAGE_KEY) || 'null');
-  } catch {
-    sessionStorage.removeItem(REGENERATE_STORAGE_KEY);
-  }
+  } catch {}
 
   function isBackendSameOrigin() {
     try {
@@ -1980,6 +1948,8 @@
       });
     }
 
+    renderUploadState();
+
     input.addEventListener('change', async () => {
       if (fileUploadAbortControllers[item.id]) {
         fileUploadAbortControllers[item.id].abort();
@@ -2287,9 +2257,9 @@
     const model = allModels.find(m => m.slug === slug);
 
     if (model) {
-      selectedModel = model;
       const preset = pendingGenerationPreset?.model === model.slug ? pendingGenerationPreset : null;
-      showModelView(preset?.tag ? { ...model, tag: preset.tag } : model);
+      selectedModel = preset?.tag ? { ...model, tag: preset.tag } : model;
+      showModelView(selectedModel);
       return;
     }
 
@@ -2334,6 +2304,42 @@
       selectedModel = preset?.tag ? { ...match, tag: preset.tag } : match;
       showModelView(selectedModel);
     }
+  }
+
+  function getPresetFilesForField(item, type) {
+    const preset = pendingGenerationPreset;
+    if (!preset || preset.model !== selectedModel?.slug || !preset.params) return [];
+    let values = type === 'combinefileinput'
+      ? preset.params[item.id]
+      : (preset.params[`${item.id}Url`] ?? preset.params[item.id]);
+    if (typeof values === 'string' && type === 'multifileinput') {
+      values = values.split(',').map(value => value.trim()).filter(Boolean);
+    }
+    if (typeof values === 'string') values = [values];
+    if (!Array.isArray(values)) return [];
+    return values.filter(value => typeof value === 'string' && value).map((url, index) => ({
+      name: `Reference ${index + 1}`,
+      url,
+      contentType: '',
+      size: null
+    }));
+  }
+
+  function applyGenerationPreset(model) {
+    const preset = pendingGenerationPreset;
+    if (!preset || preset.model !== model.slug) return;
+    promptInput.value = typeof preset.prompt === 'string' ? preset.prompt : '';
+    currentSchemaFields.forEach(item => {
+      if (FILE_PARAM_TYPES.includes((item.type || '').toLowerCase())) return;
+      const value = preset.params?.[item.id];
+      if (value == null) return;
+      const input = document.getElementById(`param-${item.id}`);
+      if (!input) return;
+      if (input.type === 'checkbox') input.checked = Boolean(value);
+      else input.value = String(value);
+    });
+    pendingGenerationPreset = null;
+    try { sessionStorage.removeItem(REGENERATE_STORAGE_KEY); } catch {}
   }
 
   // ------------------------------------------------------------------

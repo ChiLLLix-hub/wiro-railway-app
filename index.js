@@ -2091,7 +2091,7 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
         `INSERT INTO generations (user_id, wiro_task_id, model_slug, model_tag, prompt, params, status, held_amount)
          VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
          ON CONFLICT (wiro_task_id) DO NOTHING`,
-        [req.user.id, run.taskid, selectedModel, tag || null, options.prompt, rest, heldAmount]
+        [req.user.id, run.taskid, selectedModel, typeof tag === 'string' ? tag : null, options.prompt, rest, heldAmount]
       );
     } catch (dbError) {
       // Don't fail the whole generation if the ownership record can't be

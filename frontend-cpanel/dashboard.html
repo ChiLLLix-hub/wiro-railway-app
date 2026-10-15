@@ -111,7 +111,13 @@
 
     <!-- ==================== GENERATION HISTORY ==================== -->
     <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
-      <h2 class="text-lg font-bold">Generation History</h2>
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="text-lg font-bold">Generation History</h2>
+        <button id="refresh-generations-btn" type="button" class="p-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white transition" title="Refresh generation history" aria-label="Refresh generation history">
+          <svg id="refresh-generations-icon" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M5.64 9A7 7 0 0 1 18.36 6L20 12M4 12l1.64 6a7 7 0 0 0 12.72-3"/></svg>
+        </button>
+      </div>
+      <p id="generations-refresh-status" role="status" class="hidden text-xs text-red-400"></p>
       <div class="overflow-x-auto">
         <table class="w-full text-sm text-left">
           <thead class="text-slate-400 border-b border-slate-800">
@@ -122,6 +128,7 @@
               <th class="py-2 pr-4">Cost</th>
               <th class="py-2 pr-4">Output</th>
               <th class="py-2 pr-4">Date</th>
+              <th class="py-2 pr-4">Action</th>
             </tr>
           </thead>
           <tbody id="generations-tbody" class="divide-y divide-slate-800"></tbody>
@@ -161,6 +168,7 @@
   const RAILWAY_ME_GENERATIONS_URL = `${BACKEND_BASE_URL}/me/generations`;
   const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/me/credits/topup`;
   const RAILWAY_NOTIFICATION_SETTINGS_URL = `${BACKEND_BASE_URL}/me/notification-settings`;
+  const REGENERATE_STORAGE_KEY = 'wiroRegeneratePreset';
 
   const AUTH_TOKEN_STORAGE_KEY = 'wiroAuthToken';
 
@@ -256,6 +264,29 @@
         <td class="py-2 pr-4">${firstOutputUrl ? `<a href="${firstOutputUrl}" target="_blank" rel="noopener" class="text-blue-400 hover:underline">View</a>` : '-'}</td>
         <td class="py-2 pr-4 text-slate-400">${formatDate(row.created_at)}</td>
       `;
+      const actionCell = document.createElement('td');
+      actionCell.className = 'py-2 pr-4';
+      const regenerateButton = document.createElement('button');
+      regenerateButton.type = 'button';
+      regenerateButton.className = 'p-1.5 rounded-md border border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white transition disabled:opacity-40 disabled:cursor-not-allowed';
+      regenerateButton.title = row.params && typeof row.params === 'object'
+        ? 'Regenerate with the same prompt and parameters'
+        : 'Original parameters are unavailable for this generation';
+      regenerateButton.setAttribute('aria-label', regenerateButton.title);
+      regenerateButton.disabled = !row.params || typeof row.params !== 'object';
+      regenerateButton.innerHTML = '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6 4 4"/><path d="m5 21 3.5-.7L19 9.8a2.8 2.8 0 0 0-4-4L4.5 16.3 5 21Z"/><path d="m3 3 2 2"/><path d="m8 2 1 2"/></svg>';
+      regenerateButton.addEventListener('click', () => {
+        if (!row.model_slug || !row.params || typeof row.params !== 'object') return;
+        sessionStorage.setItem(REGENERATE_STORAGE_KEY, JSON.stringify({
+          model: row.model_slug,
+          tag: row.model_tag || null,
+          prompt: row.prompt || '',
+          params: row.params
+        }));
+        window.location.href = `index.html#model/${encodeURIComponent(row.model_slug)}`;
+      });
+      actionCell.appendChild(regenerateButton);
+      tr.appendChild(actionCell);
       tbody.appendChild(tr);
     }
   }
@@ -276,6 +307,24 @@
     await loadNotificationSettings();
   }
 
+  async function refreshGenerationHistory() {
+    const button = document.getElementById('refresh-generations-btn');
+    const icon = document.getElementById('refresh-generations-icon');
+    const status = document.getElementById('generations-refresh-status');
+    button.disabled = true;
+    icon.classList.add('animate-spin');
+    status.classList.add('hidden');
+    try {
+      renderGenerations(await loadGenerations());
+    } catch (error) {
+      status.textContent = error.message || 'Could not refresh generation history.';
+      status.classList.remove('hidden');
+    } finally {
+      button.disabled = false;
+      icon.classList.remove('animate-spin');
+    }
+  }
+
   function openCreditsModal() {
     document.getElementById('credits-modal').classList.remove('hidden');
     document.getElementById('credits-modal-error').classList.add('hidden');
@@ -285,6 +334,7 @@
   }
 
   document.getElementById('add-credits-btn').addEventListener('click', openCreditsModal);
+  document.getElementById('refresh-generations-btn').addEventListener('click', refreshGenerationHistory);
   document.getElementById('credits-modal-close').addEventListener('click', closeCreditsModal);
   document.getElementById('logout-btn').addEventListener('click', () => {
     clearAuthToken();
