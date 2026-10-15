@@ -98,12 +98,14 @@ export async function initSchema() {
       user_id UUID REFERENCES users(id) ON DELETE CASCADE,
       event_key TEXT NOT NULL,
       channel TEXT NOT NULL CHECK (channel IN ('email', 'telegram', 'discord')),
+      event_type TEXT NOT NULL DEFAULT 'account',
       destination TEXT NOT NULL,
       subject TEXT NOT NULL,
       message TEXT NOT NULL,
       link TEXT,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sending', 'sent')),
       attempts INTEGER NOT NULL DEFAULT 0,
+      locked_at TIMESTAMPTZ,
       next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       last_error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -111,6 +113,8 @@ export async function initSchema() {
       UNIQUE (event_key, channel)
     );
   `);
+  await pool.query(`ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'account';`);
+  await pool.query(`ALTER TABLE notification_outbox ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS notification_outbox_pending_idx ON notification_outbox (next_attempt_at) WHERE status = 'pending';`);
 
   await pool.query(`
@@ -134,6 +138,7 @@ export async function initSchema() {
   // the difference against) once the task finishes, even on databases
   // created before this column existed.
   await pool.query(`ALTER TABLE generations ADD COLUMN IF NOT EXISTS held_amount NUMERIC;`);
+  await pool.query(`ALTER TABLE generations ADD COLUMN IF NOT EXISTS last_polled_at TIMESTAMPTZ;`);
 
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS generations_wiro_task_id_idx ON generations (wiro_task_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS generations_user_id_idx ON generations (user_id);`);

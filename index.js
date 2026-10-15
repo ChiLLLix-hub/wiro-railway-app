@@ -1297,6 +1297,7 @@ app.post('/auth/login', authRateLimiter, async (req, res) => {
 });
 
 app.post('/auth/verify-email', authRateLimiter, async (req, res) => {
+  if (!isDbConfigured()) return res.status(503).json({ success: false, error: 'Accounts are not configured on this server.' });
   try {
     const token = String(req.body?.token || '');
     const { rows } = await pool.query(
@@ -1314,6 +1315,7 @@ app.post('/auth/verify-email', authRateLimiter, async (req, res) => {
 });
 
 app.post('/auth/forgot-password', authRateLimiter, async (req, res) => {
+  if (!isDbConfigured()) return res.status(503).json({ success: false, error: 'Accounts are not configured on this server.' });
   const email = String(req.body?.email || '').trim().toLowerCase();
   try {
     if (isValidEmail(email)) {
@@ -1330,6 +1332,7 @@ app.post('/auth/forgot-password', authRateLimiter, async (req, res) => {
 });
 
 app.post('/auth/reset-password', authRateLimiter, async (req, res) => {
+  if (!isDbConfigured()) return res.status(503).json({ success: false, error: 'Accounts are not configured on this server.' });
   const token = String(req.body?.token || '');
   const password = String(req.body?.password || '');
   if (password.length < 8) return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
@@ -1428,6 +1431,13 @@ app.put('/me/notification-settings', apiRateLimiter, requireAuth, async (req, re
            DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = now()`,
           [req.user.id, channel, event, enabled]
         );
+        if (!enabled) {
+          await pool.query(
+            `DELETE FROM notification_outbox
+             WHERE user_id = $1 AND channel = $2 AND event_type = $3 AND status IN ('pending', 'sending')`,
+            [req.user.id, channel, event]
+          );
+        }
       }
     }
     return res.json({ success: true });
@@ -1493,6 +1503,11 @@ app.delete('/me/integrations/:provider', apiRateLimiter, requireAuth, async (req
       'UPDATE user_notification_preferences SET enabled = FALSE, updated_at = now() WHERE user_id = $1 AND channel = $2',
       [req.user.id, provider]
     );
+    await pool.query(
+      `DELETE FROM notification_outbox
+       WHERE user_id = $1 AND channel = $2 AND status IN ('pending', 'sending')`,
+      [req.user.id, provider]
+    );
     return res.json({ success: true });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Could not unlink integration.' });
@@ -1548,7 +1563,7 @@ app.post('/integrations/telegram/webhook', async (req, res) => {
   const text = String(req.body?.message?.text || '');
   const chatId = req.body?.message?.chat?.id;
   const match = /^\/start\s+([a-f0-9]{64})$/i.exec(text.trim());
-  if (!match || chatId == null) return res.sendStatus(200);
+  if (!match || chatId == null || req.body?.message?.chat?.type !== 'private') return res.sendStatus(200);
   try {
     const { rows } = await pool.query(
       `DELETE FROM integration_link_tokens
@@ -2326,10 +2341,19 @@ async function checkPendingGenerations() {
     const { rows } = await pool.query(
       `SELECT wiro_task_id, user_id, held_amount FROM generations
        WHERE status = 'pending' AND created_at > now() - interval '7 days'
-       ORDER BY created_at ASC LIMIT 15`
+         AND (last_polled_at IS NULL OR last_polled_at < now() - interval '45 seconds')
+       ORDER BY last_polled_at NULLS FIRST, created_at ASC LIMIT 15`
     );
     for (const generation of rows) {
       try {
+        const { rows: claimed } = await pool.query(
+          `UPDATE generations SET last_polled_at = now()
+           WHERE wiro_task_id = $1 AND status = 'pending'
+             AND (last_polled_at IS NULL OR last_polled_at < now() - interval '45 seconds')
+           RETURNING wiro_task_id`,
+          [generation.wiro_task_id]
+        );
+        if (!claimed[0]) continue;
         const detail = await client.getTask({ taskid: generation.wiro_task_id });
         const task = detail.result ? (detail.tasklist || [])[0] : null;
         if (!task || isTaskPending(task)) continue;

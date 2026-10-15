@@ -14,8 +14,8 @@ const mailTransport = smtpHost && process.env.SMTP_USER && process.env.SMTP_PASS
 
 export async function queueMail({ userId, eventKey, to, subject, message, link }) {
   await pool.query(
-    `INSERT INTO notification_outbox (user_id, event_key, channel, destination, subject, message, link)
-     VALUES ($1, $2, 'email', $3, $4, $5, $6)
+    `INSERT INTO notification_outbox (user_id, event_key, channel, event_type, destination, subject, message, link)
+     VALUES ($1, $2, 'email', 'account', $3, $4, $5, $6)
      ON CONFLICT (event_key, channel) DO NOTHING`,
     [userId || null, eventKey, to, subject, message, link || null]
   );
@@ -23,8 +23,8 @@ export async function queueMail({ userId, eventKey, to, subject, message, link }
 
 export async function queueOptInNotifications({ userId, eventKey, eventType, subject, message, link }) {
   await pool.query(
-    `INSERT INTO notification_outbox (user_id, event_key, channel, destination, subject, message, link)
-     SELECT u.id, $2, p.channel,
+    `INSERT INTO notification_outbox (user_id, event_key, channel, event_type, destination, subject, message, link)
+     SELECT u.id, $2, p.channel, $3,
        CASE p.channel WHEN 'email' THEN u.email WHEN 'telegram' THEN u.telegram_chat_id ELSE u.discord_user_id END,
        $4, $5, $6
      FROM users u
@@ -93,11 +93,11 @@ async function deliver(row) {
 export async function processNotificationOutbox() {
   if (!pool) return;
   const { rows } = await pool.query(
-    `UPDATE notification_outbox SET status = 'sending', attempts = attempts + 1
+    `UPDATE notification_outbox SET status = 'sending', attempts = attempts + 1, locked_at = now()
      WHERE id IN (
        SELECT id FROM notification_outbox
        WHERE (status = 'pending' AND next_attempt_at <= now())
-          OR (status = 'sending' AND created_at < now() - interval '10 minutes')
+          OR (status = 'sending' AND locked_at < now() - interval '10 minutes')
        ORDER BY created_at
        FOR UPDATE SKIP LOCKED
        LIMIT 20
@@ -109,13 +109,13 @@ export async function processNotificationOutbox() {
     try {
       await deliver(row);
       await pool.query(
-        `UPDATE notification_outbox SET status = 'sent', sent_at = now(), last_error = NULL WHERE id = $1`,
+        `UPDATE notification_outbox SET status = 'sent', sent_at = now(), locked_at = NULL, last_error = NULL WHERE id = $1`,
         [row.id]
       );
     } catch (error) {
       const delaySeconds = Math.min(3600, 30 * (2 ** Math.min(row.attempts, 7)));
       await pool.query(
-        `UPDATE notification_outbox SET status = 'pending', next_attempt_at = now() + ($2 * interval '1 second'),
+        `UPDATE notification_outbox SET status = 'pending', locked_at = NULL, next_attempt_at = now() + ($2 * interval '1 second'),
            last_error = $3 WHERE id = $1`,
         [row.id, delaySeconds, String(error.message || error).slice(0, 1000)]
       );
