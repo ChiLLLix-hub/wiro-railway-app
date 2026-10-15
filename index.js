@@ -1480,19 +1480,15 @@ app.post('/me/email-test', emailTestRateLimiter, requireAuth, async (req, res) =
     const code = String(error.code || 'SMTP_DELIVERY_FAILED').slice(0, 40);
     const diagnostics = {
       code,
-      message: code === 'EMAIL_SERVICE_NOT_CONFIGURED'
+      message: code === 'EMAIL_NOT_CONFIGURED'
         ? error.message
-        : code === 'EMAIL_SERVICE_TIMEOUT' || code === 'EMAIL_SERVICE_UNAVAILABLE'
-          ? error.message
-          : code === 'EMAIL_SERVICE_REJECTED'
-            ? 'The email service rejected the request. Check its API key, endpoint, and logs.'
-            : code === 'ETIMEDOUT' || code === 'ESOCKET'
-              ? 'The SMTP connection timed out. Confirm the SMTP host and port, implicit TLS on port 465, and that the mail host allows connections from Railway.'
-              : code === 'EAUTH'
-                ? 'The mail server rejected authentication. Check the SMTP username and mailbox password.'
-                : code === 'EMAIL_NOT_CONFIGURED'
-                  ? error.message
-                  : 'The email provider could not deliver the test message. Check the server logs and provider settings.'
+        : ['ETIMEDOUT', 'ESOCKET', 'ECONNECTION', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EHOSTUNREACH'].includes(code)
+          ? 'The SMTP connection failed. Confirm the SMTP host and port, implicit TLS on port 465, and that the mail host allows connections from Railway.'
+          : code === 'EAUTH'
+            ? 'The mail server rejected authentication. Check the SMTP username and mailbox password.'
+            : code === 'EENVELOPE'
+              ? 'The SMTP server rejected the sender or recipient. Confirm the verified account address and EMAIL_FROM settings.'
+              : 'SMTP could not deliver the test message. Check the server logs and SMTP provider settings.'
     };
     console.error('SMTP email test failed:', { code });
     return res.status(502).json({

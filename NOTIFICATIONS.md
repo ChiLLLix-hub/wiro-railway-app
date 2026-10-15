@@ -4,31 +4,9 @@ Optional notifications are off by default. Users manage generation-complete and 
 
 ## Email
 
-Email can be delivered through a separate Railway email API or directly over SMTP.
+Email is delivered directly over SMTP from this app.
 
-Set `FRONTEND_BASE_URL` on this app to the public cPanel site origin, without a trailing slash; account verification and password-reset messages use it in both delivery modes.
-
-### Separate Railway email service
-
-The [`railwayapp-email` template](https://github.com/vergissberlin/railwayapp-email) can be deployed as a separate service. Configure the template's SMTP provider variables there:
-
-- `EMAIL_SERVICE_PROVIDER`
-- `EMAIL_HOST`
-- `EMAIL_CLIENT_USER`
-- `EMAIL_CLIENT_PASSWORD`
-- `EMAIL_CLIENT_FROM`
-- `EMAIL_API_KEY` (a generated secret)
-
-The template currently provides only `POST /email/registration`; it does not provide the generic send endpoint this app needs. Extend or fork that service to implement `POST /email/send`, require the `x-api-key` header to match `EMAIL_API_KEY`, and accept JSON `{ "to": "...", "subject": "...", "text": "..." }`. The service should use its configured `EMAIL_CLIENT_FROM` as the sender and return a non-2xx status if delivery fails.
-
-Then set these variables on this app's Railway service:
-
-- `EMAIL_SERVICE_URL` (the email service's HTTPS origin, or its `http://<private-domain>:<port>` address when using Railway private networking)
-- `EMAIL_SERVICE_API_KEY` (the same secret as the email service's `EMAIL_API_KEY`)
-
-The app sends test messages and queued email notifications to `/email/send`, authenticating server-to-server; the API key is never exposed to the browser. When either service variable is set, both are required and the app uses the API instead of SMTP. This separates the SMTP connection from the main app, but does not bypass an SMTP provider that blocks Railway connections.
-
-### Direct SMTP fallback
+Set `FRONTEND_BASE_URL` on this app to the public cPanel site origin, without a trailing slash; account verification and password-reset messages use it in their links.
 
 Use SMTP credentials for a mailbox you own, including one provided by your web host. Set these variables on this app's Railway service:
 

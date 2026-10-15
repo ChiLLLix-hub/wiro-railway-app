@@ -1,8 +1,6 @@
 import nodemailer from 'nodemailer';
 import { pool } from './db.js';
 
-const emailServiceUrl = process.env.EMAIL_SERVICE_URL;
-const emailServiceApiKey = process.env.EMAIL_SERVICE_API_KEY;
 const smtpHost = process.env.SMTP_HOST;
 const smtpPort = Number(process.env.SMTP_PORT || 587);
 const mailTransport = smtpHost && process.env.SMTP_USER && process.env.SMTP_PASSWORD
@@ -18,59 +16,6 @@ const mailTransport = smtpHost && process.env.SMTP_USER && process.env.SMTP_PASS
   : null;
 
 async function sendEmail({ to, subject, text }) {
-  if (emailServiceUrl || emailServiceApiKey) {
-    if (!emailServiceUrl || !emailServiceApiKey) {
-      throw Object.assign(
-        new Error('Set both EMAIL_SERVICE_URL and EMAIL_SERVICE_API_KEY.'),
-        { code: 'EMAIL_SERVICE_NOT_CONFIGURED' }
-      );
-    }
-
-    let endpoint;
-    try {
-      const serviceUrl = new URL(emailServiceUrl);
-      const isRailwayPrivateHost = serviceUrl.hostname.endsWith('.railway.internal');
-      if (serviceUrl.protocol !== 'https:' && !(serviceUrl.protocol === 'http:' && isRailwayPrivateHost)) {
-        throw new Error('Email service URL must use HTTPS or Railway private networking.');
-      }
-      endpoint = new URL('/email/send', serviceUrl);
-    } catch (error) {
-      throw Object.assign(
-        new Error(error.message === 'Email service URL must use HTTPS or Railway private networking.'
-          ? error.message
-          : 'EMAIL_SERVICE_URL must be a valid HTTPS URL or Railway private service URL.'),
-        { code: 'EMAIL_SERVICE_NOT_CONFIGURED' }
-      );
-    }
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': emailServiceApiKey
-        },
-        body: JSON.stringify({ to, subject, text }),
-        signal: AbortSignal.timeout(15_000)
-      });
-      if (!response.ok) {
-        throw Object.assign(
-          new Error(`Email service rejected the request (HTTP ${response.status}).`),
-          { code: 'EMAIL_SERVICE_REJECTED' }
-        );
-      }
-      return;
-    } catch (error) {
-      if (error.code === 'EMAIL_SERVICE_REJECTED') throw error;
-      throw Object.assign(
-        new Error(error.name === 'TimeoutError'
-          ? 'The email service request timed out.'
-          : 'The email service could not be reached.'),
-        { code: error.name === 'TimeoutError' ? 'EMAIL_SERVICE_TIMEOUT' : 'EMAIL_SERVICE_UNAVAILABLE' }
-      );
-    }
-  }
-
   if (!mailTransport || !process.env.EMAIL_FROM) {
     throw Object.assign(
       new Error('SMTP delivery is not configured. Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and EMAIL_FROM.'),
