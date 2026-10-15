@@ -67,14 +67,12 @@ export async function queueOptInNotifications({ userId, eventKey, eventType, sub
   await pool.query(
     `INSERT INTO notification_outbox (user_id, event_key, channel, event_type, destination, subject, message, link)
      SELECT u.id, $2, p.channel, $3,
-       CASE p.channel WHEN 'email' THEN u.email WHEN 'telegram' THEN u.telegram_chat_id ELSE u.discord_user_id END,
+       u.email,
        $4, $5, $6
      FROM users u
      JOIN user_notification_preferences p ON p.user_id = u.id AND p.event_type = $3 AND p.enabled
      WHERE u.id = $1
-       AND ((p.channel = 'email' AND u.email_verified)
-         OR (p.channel = 'telegram' AND u.telegram_chat_id IS NOT NULL)
-         OR (p.channel = 'discord' AND u.discord_user_id IS NOT NULL))
+       AND p.channel = 'email' AND u.email_verified
      ON CONFLICT (event_key, channel) DO NOTHING`,
     [userId, eventKey, eventType, subject, message, link || null]
   );
@@ -87,41 +85,7 @@ async function deliver(row) {
     return;
   }
 
-  if (row.channel === 'telegram') {
-    if (!process.env.TELEGRAM_BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN is not configured.');
-    const response = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: row.destination,
-        text: row.link ? `${row.message}\n${row.link}` : row.message,
-        disable_web_page_preview: true
-      })
-    });
-    if (!response.ok) throw new Error(`Telegram delivery failed (${response.status}).`);
-    return;
-  }
-
-  if (!process.env.DISCORD_BOT_TOKEN) throw new Error('DISCORD_BOT_TOKEN is not configured.');
-  const dmResponse = await fetch('https://discord.com/api/v10/users/@me/channels', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ recipient_id: row.destination })
-  });
-  const dm = await dmResponse.json().catch(() => ({}));
-  if (!dmResponse.ok || !dm.id) throw new Error(`Discord DM could not be opened (${dmResponse.status}).`);
-  const messageResponse = await fetch(`https://discord.com/api/v10/channels/${encodeURIComponent(dm.id)}/messages`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ content: row.link ? `${row.message}\n${row.link}` : row.message })
-  });
-  if (!messageResponse.ok) throw new Error(`Discord delivery failed (${messageResponse.status}).`);
+  throw new Error(`Unsupported notification channel: ${row.channel}`);
 }
 
 export async function processNotificationOutbox() {

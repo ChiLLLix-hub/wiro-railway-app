@@ -87,21 +87,9 @@
           <tbody class="divide-y divide-slate-800">
             <tr>
               <th class="py-3 pr-4 font-medium">Email</th>
-              <td class="py-3 pr-4"><input type="checkbox" data-channel="email" data-event="generation_success" class="notification-pref h-4 w-4 accent-blue-500"></td>
-              <td class="py-3 pr-4"><input type="checkbox" data-channel="email" data-event="demo_credit_added" class="notification-pref h-4 w-4 accent-blue-500"></td>
+              <td class="py-3 pr-4"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" data-channel="email" data-event="generation_success" class="notification-pref peer sr-only"><span class="w-11 h-6 bg-slate-700 rounded-full peer-checked:bg-blue-500 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5"></span><span class="ml-2 text-xs text-slate-400">Off / On</span></label></td>
+              <td class="py-3 pr-4"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" data-channel="email" data-event="demo_credit_added" class="notification-pref peer sr-only"><span class="w-11 h-6 bg-slate-700 rounded-full peer-checked:bg-blue-500 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5"></span><span class="ml-2 text-xs text-slate-400">Off / On</span></label></td>
               <td id="email-link-status" class="py-3 text-xs text-slate-400">Checking…</td>
-            </tr>
-            <tr>
-              <th class="py-3 pr-4 font-medium">Telegram</th>
-              <td class="py-3 pr-4"><input type="checkbox" data-channel="telegram" data-event="generation_success" class="notification-pref h-4 w-4 accent-blue-500"></td>
-              <td class="py-3 pr-4"><input type="checkbox" data-channel="telegram" data-event="demo_credit_added" class="notification-pref h-4 w-4 accent-blue-500"></td>
-              <td class="py-3 text-xs"><button id="telegram-link-btn" type="button" class="text-blue-400 hover:underline">Link bot</button> <button id="telegram-id-btn" type="button" class="text-blue-400 hover:underline">Enter ID</button><button id="telegram-unlink-btn" type="button" class="hidden text-red-400 hover:underline">Unlink</button></td>
-            </tr>
-            <tr>
-              <th class="py-3 pr-4 font-medium">Discord DM</th>
-              <td class="py-3 pr-4"><input type="checkbox" data-channel="discord" data-event="generation_success" class="notification-pref h-4 w-4 accent-blue-500"></td>
-              <td class="py-3 pr-4"><input type="checkbox" data-channel="discord" data-event="demo_credit_added" class="notification-pref h-4 w-4 accent-blue-500"></td>
-              <td class="py-3 text-xs"><button id="discord-link-btn" type="button" class="text-blue-400 hover:underline">Link Discord</button><button id="discord-unlink-btn" type="button" class="hidden text-red-400 hover:underline">Unlink</button></td>
             </tr>
           </tbody>
         </table>
@@ -224,15 +212,9 @@
     for (const checkbox of document.querySelectorAll('.notification-pref')) {
       const channel = checkbox.dataset.channel;
       const event = checkbox.dataset.event;
-      const linked = Boolean(data.linked[channel]);
       checkbox.checked = Boolean(data.preferences[channel]?.[event]);
-      checkbox.disabled = !linked;
+      checkbox.disabled = !data.linked[channel];
     }
-    document.getElementById('telegram-link-btn').classList.toggle('hidden', data.linked.telegram);
-    document.getElementById('telegram-id-btn').classList.toggle('hidden', data.linked.telegram);
-    document.getElementById('telegram-unlink-btn').classList.toggle('hidden', !data.linked.telegram);
-    document.getElementById('discord-link-btn').classList.toggle('hidden', data.linked.discord);
-    document.getElementById('discord-unlink-btn').classList.toggle('hidden', !data.linked.discord);
   }
 
   function formatDate(value) {
@@ -394,7 +376,7 @@
 
   document.querySelectorAll('.notification-pref').forEach(checkbox => {
     checkbox.addEventListener('change', async () => {
-      const preferences = { email: {}, telegram: {}, discord: {} };
+      const preferences = { email: {} };
       document.querySelectorAll('.notification-pref').forEach(item => {
         preferences[item.dataset.channel][item.dataset.event] = item.checked;
       });
@@ -412,52 +394,6 @@
       }
     });
   });
-
-  async function linkIntegration(provider) {
-    const data = await authJson(`${BACKEND_BASE_URL}/me/integrations/${provider}/link`, { method: 'POST' });
-    window.location.href = data.url;
-  }
-  async function unlinkIntegration(provider) {
-    const status = document.getElementById('notification-settings-status');
-    try {
-      await authJson(`${BACKEND_BASE_URL}/me/integrations/${provider}`, { method: 'DELETE' });
-      await loadNotificationSettings();
-      status.textContent = `${provider} account unlinked; its notifications are off.`;
-    } catch (error) {
-      status.textContent = error.message;
-    }
-  }
-  document.getElementById('telegram-link-btn').addEventListener('click', () => linkIntegration('telegram').catch(error => {
-    document.getElementById('notification-settings-status').textContent = error.message;
-  }));
-  document.getElementById('telegram-id-btn').addEventListener('click', async () => {
-    const status = document.getElementById('notification-settings-status');
-    const chatId = window.prompt('Enter your numeric Telegram ID. First open the bot in Telegram and press Start so it can message you.');
-    if (!chatId) return;
-    try {
-      await authJson(`${BACKEND_BASE_URL}/me/integrations/telegram`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatId })
-      });
-      await loadNotificationSettings();
-      status.textContent = 'Telegram ID saved. Enable the notifications you want.';
-    } catch (error) {
-      status.textContent = error.message;
-    }
-  });
-  document.getElementById('discord-link-btn').addEventListener('click', () => linkIntegration('discord').catch(error => {
-    document.getElementById('notification-settings-status').textContent = error.message;
-  }));
-  document.getElementById('telegram-unlink-btn').addEventListener('click', () => unlinkIntegration('telegram'));
-  document.getElementById('discord-unlink-btn').addEventListener('click', () => unlinkIntegration('discord'));
-
-  const discordStatus = new URLSearchParams(window.location.search).get('discord');
-  if (discordStatus) {
-    document.getElementById('notification-settings-status').textContent =
-      discordStatus === 'linked' ? 'Discord account linked.' : 'Discord linking failed. Please try again.';
-    history.replaceState(null, '', window.location.pathname);
-  }
 
   document.querySelectorAll('.credits-package-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
