@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
-import { hashPassword, verifyPassword, issueToken, requireAuth, requireAdmin, findUserByEmail, findUserById, createUser } from './auth.js';
+import { hashPassword, verifyPassword, issueToken, requireAuth, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt, markUserLoggedIn } from './auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1078,6 +1078,94 @@ function isValidEmail(value) {
   return true;
 }
 
+// Postgres NUMERIC columns come back from `pg` as strings (to avoid float
+// precision loss) - normalize to a JS number everywhere credits are
+// exposed/compared so callers never need to remember to coerce it.
+function toCreditsNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// ==================== CREDIT HOLD / ESCROW ====================
+// Charging credits only once a generation finishes (as the previous
+// implementation did) let a user with e.g. 1 credit fire off many
+// concurrent generations in parallel - each one's own pre-check saw the
+// same still-unspent balance before any of them had finished and deducted
+// anything, so the "must have >= 1 credit" gate could be bypassed by
+// racing requests. Instead, a hold (escrow) equal to the *estimated* cost
+// is atomically deducted from the user's balance the moment a generation
+// is accepted (see holdUserCredits below - the `AND credits >= $1` clause
+// makes the check-and-deduct a single atomic statement, so concurrent
+// requests against the same row are serialized by Postgres and can't both
+// pass). The hold is then settled once the task finishes: refunded in full
+// if the task failed, or trued up against the real `total_cost` if it
+// succeeded (charging more if the final cost exceeds the hold, refunding
+// the excess if it doesn't) - so the user is never charged before/without
+// Wiro actually confirming a cost, but also can't dodge the real cost by
+// only having it checked once upfront.
+
+// Fallback hold amount when a model's cost can't be estimated ahead of
+// time (formatEstimatedCost() returns null, e.g. no dynamicprice/cps/
+// approximatelycost metadata available) - mirrors the previous "must have
+// at least 1 credit" rule so there's always some hold in place rather than
+// letting the request through with no hold at all.
+const FALLBACK_HOLD_CREDITS = 1;
+
+// Atomically attempts to place a hold of `amount` credits on `userId`'s
+// balance. The `AND credits >= $1` condition and the UPDATE itself run as
+// one statement, so Postgres takes a row lock on the user's row for the
+// duration - a second concurrent call for the same user genuinely waits
+// for the first to commit before it can see the now-reduced balance,
+// closing the race that let multiple concurrent generations all pass a
+// separate SELECT-then-check. Returns the new balance on success, or null
+// if the user doesn't have enough credits available to hold.
+async function holdUserCredits(userId, amount) {
+  const { rows } = await pool.query(
+    `UPDATE users SET credits = credits - $1, updated_at = now()
+     WHERE id = $2 AND credits >= $1
+     RETURNING credits`,
+    [amount, userId]
+  );
+  return rows[0] ? toCreditsNumber(rows[0].credits) : null;
+}
+
+// Returns held credits to the user - used when a generation fails outright
+// (Wiro rejected/errored the run) or when the task ultimately fails, so a
+// hold is never kept without a corresponding real charge.
+async function refundUserCredits(userId, amount) {
+  if (!userId || !(amount > 0)) return;
+  await pool.query(
+    `UPDATE users SET credits = credits + $1, updated_at = now() WHERE id = $2`,
+    [amount, userId]
+  );
+}
+
+// Deducts an additional amount from the user's balance when a task's real
+// cost exceeds what was held for it. Deliberately not gated on
+// "credits >= amount" like holdUserCredits - the work has already been
+// done and billed by Wiro, so unlike a *new* generation request this charge
+// cannot be declined; it's allowed to take the balance negative, and the
+// next generation attempt's own hold check will require the user to top up
+// before they can start another job.
+async function chargeAdditionalCredits(userId, amount) {
+  if (!userId || !(amount > 0)) return;
+  await pool.query(
+    `UPDATE users SET credits = credits - $1, updated_at = now() WHERE id = $2`,
+    [amount, userId]
+  );
+}
+
+// Records an entry in the credit_transactions audit trail. Only used for
+// out-of-band balance changes (admin adjustments, demo top-ups) - not for
+// the per-generation hold/charge/refund flow, which is already tracked on
+// generations.held_amount/total_cost.
+async function recordCreditTransaction({ userId, amount, type, reason, createdBy }) {
+  await pool.query(
+    `INSERT INTO credit_transactions (user_id, amount, type, reason, created_by) VALUES ($1, $2, $3, $4, $5)`,
+    [userId, amount, type, reason || null, createdBy || null]
+  );
+}
+
 app.post('/auth/register', authRateLimiter, async (req, res) => {
   if (!isDbConfigured()) {
     return res.status(503).json({ success: false, error: 'Accounts are not configured on this server (DATABASE_URL missing).' });
@@ -1118,19 +1206,38 @@ app.post('/auth/login', authRateLimiter, async (req, res) => {
     return res.status(503).json({ success: false, error: 'Accounts are not configured on this server (DATABASE_URL missing).' });
   }
 
+  const normalizedEmail = String(req.body?.email || '').trim().toLowerCase();
+  const ip = req.ip;
+  const userAgent = req.headers['user-agent'] || null;
+
   try {
     const { email, password } = req.body || {};
     if (!email || !password) {
+      await recordLoginAttempt({ email: normalizedEmail, success: false, reason: 'missing_credentials', ip, userAgent });
       return res.status(400).json({ success: false, error: 'Email and password are required.' });
     }
 
-    const user = await findUserByEmail(String(email).trim().toLowerCase());
+    const user = await findUserByEmail(normalizedEmail);
+
+    // A blacklisted email is rejected before anything else - this is a
+    // permanent-until-an-admin-lifts-it denial (distinct from `is_active`,
+    // which an admin can freely re-enable), so it must never be bypassed
+    // by the generic "invalid email or password" branch below.
+    if (user?.blacklisted) {
+      await recordLoginAttempt({ email: normalizedEmail, success: false, reason: 'blacklisted', ip, userAgent });
+      return res.status(403).json({ success: false, error: 'This account has been blocked. Please contact support.' });
+    }
+
     // Use the same generic error for "no such user" and "wrong password" so
     // a login attempt can't be used to enumerate which emails are
     // registered.
     if (!user || !user.is_active || !(await verifyPassword(String(password), user.password_hash))) {
+      await recordLoginAttempt({ email: normalizedEmail, success: false, reason: !user ? 'no_such_user' : (!user.is_active ? 'inactive' : 'bad_password'), ip, userAgent });
       return res.status(401).json({ success: false, error: 'Invalid email or password.' });
     }
+
+    await recordLoginAttempt({ email: normalizedEmail, success: true, ip, userAgent });
+    await markUserLoggedIn(user.id);
 
     const token = issueToken(user);
     return res.json({
@@ -1151,8 +1258,86 @@ app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
     }
     return res.json({
       success: true,
-      user: { id: user.id, email: user.email, role: user.role, displayName: user.display_name }
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        displayName: user.display_name,
+        credits: toCreditsNumber(user.credits),
+        lastLoginAt: user.last_login_at
+      }
     });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Powers the user dashboard's overview cards: last login, current credit
+// balance, how much has been spent today/this week/this month (derived
+// from completed generations' real total_cost - not the in-flight hold
+// amount), and the total number of generations run.
+app.get('/me/summary', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    const user = await findUserById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    const { rows: spendRows } = await pool.query(
+      `SELECT
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('day', now())), 0) AS today,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('week', now())), 0) AS this_week,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('month', now())), 0) AS this_month,
+         COUNT(*) AS total_generations
+       FROM generations
+       WHERE user_id = $1 AND status = 'completed'`,
+      [req.user.id]
+    );
+    const spend = spendRows[0] || {};
+
+    return res.json({
+      success: true,
+      summary: {
+        credits: toCreditsNumber(user.credits),
+        lastLoginAt: user.last_login_at,
+        spendToday: toCreditsNumber(spend.today),
+        spendThisWeek: toCreditsNumber(spend.this_week),
+        spendThisMonth: toCreditsNumber(spend.this_month),
+        totalGenerations: Number(spend.total_generations) || 0
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Demo-only credit top-up: no real payment processor is wired up yet, so
+// this just lets a signed-in user add one of a few fixed credit packages
+// directly to their balance. This exists purely so the "add credits" /
+// payment redirect flow (triggered when a user has <1 credit) has
+// somewhere real to send the user and something real to call - it must be
+// replaced with an actual payment gateway integration before going live.
+const DEMO_CREDIT_PACKAGES = { starter: 10, pro: 50, studio: 100 };
+
+app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    const { packageId } = req.body || {};
+    const amount = DEMO_CREDIT_PACKAGES[packageId];
+    if (!amount) {
+      return res.status(400).json({ success: false, error: `Invalid package. Choose one of: ${Object.keys(DEMO_CREDIT_PACKAGES).join(', ')}.` });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE users SET credits = credits + $1, updated_at = now() WHERE id = $2 RETURNING credits`,
+      [amount, req.user.id]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    await recordCreditTransaction({ userId: req.user.id, amount, type: 'topup_demo', reason: `Demo top-up: ${packageId} package` });
+
+    return res.json({ success: true, credits: toCreditsNumber(rows[0].credits), added: amount });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -1163,7 +1348,7 @@ app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
 app.get('/me/generations', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, wiro_task_id, model_slug, prompt, status, total_cost, outputs, created_at, completed_at
+      `SELECT id, wiro_task_id, model_slug, prompt, status, total_cost, held_amount, outputs, created_at, completed_at
        FROM generations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
       [req.user.id]
     );
@@ -1173,14 +1358,31 @@ app.get('/me/generations', apiRateLimiter, requireAuth, async (req, res) => {
   }
 });
 
+// ==================== ADMIN DASHBOARD ====================
+
 // Admin-only: list all accounts, so support/ops can review or promote users
-// without direct DB access.
+// without direct DB access. `search` matches email or display name
+// (case-insensitive, partial match) so an admin can find a specific user
+// without paging through the full list.
 app.get('/admin/users', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
   try {
+    const search = String(req.query.search || '').trim();
+    const params = [];
+    let where = '';
+    if (search) {
+      params.push(`%${search.toLowerCase()}%`);
+      where = `WHERE lower(email) LIKE $1 OR lower(COALESCE(display_name, '')) LIKE $1`;
+    }
+
     const { rows } = await pool.query(
-      `SELECT id, email, role, display_name, is_active, created_at FROM users ORDER BY created_at DESC LIMIT 500`
+      `SELECT id, email, role, display_name, is_active, blacklisted, blacklist_reason, credits, last_login_at, created_at
+       FROM users ${where} ORDER BY created_at DESC LIMIT 500`,
+      params
     );
-    return res.json({ success: true, users: rows });
+    return res.json({
+      success: true,
+      users: rows.map(u => ({ ...u, credits: toCreditsNumber(u.credits) }))
+    });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -1205,8 +1407,229 @@ app.patch('/admin/users/:id/role', apiRateLimiter, requireAuth, requireAdmin, as
   }
 });
 
+// Admin-only: directly add or remove a user's credits, always requiring a
+// reason so the resulting entry in `credit_transactions` is meaningful for
+// later auditing (e.g. "refund for bug", "manual promo credit").
+app.post('/admin/users/:id/credits', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const amount = Number(req.body?.amount);
+    const reason = String(req.body?.reason || '').trim();
+    if (!Number.isFinite(amount) || amount === 0) {
+      return res.status(400).json({ success: false, error: 'A non-zero numeric amount is required (positive to add, negative to remove).' });
+    }
+    if (!reason) {
+      return res.status(400).json({ success: false, error: 'A reason is required for every manual credit adjustment.' });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE users SET credits = credits + $1, updated_at = now() WHERE id = $2 RETURNING id, email, credits`,
+      [amount, req.params.id]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    await recordCreditTransaction({ userId: req.params.id, amount, type: 'admin_adjust', reason, createdBy: req.user.id });
+
+    return res.json({ success: true, user: { ...rows[0], credits: toCreditsNumber(rows[0].credits) } });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: block/unblock toggles `is_active` - a blocked user keeps
+// their account and data but can no longer log in (enforced in
+// POST /auth/login). Distinct from blacklisting below, which is a
+// stronger, reason-tracked, email-level denial.
+app.post('/admin/users/:id/block', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET is_active = FALSE, updated_at = now() WHERE id = $1 RETURNING id, email, is_active`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
+    return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/admin/users/:id/unblock', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET is_active = TRUE, updated_at = now() WHERE id = $1 RETURNING id, email, is_active`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
+    return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: blacklist/unblacklist by user id, recording why - a
+// blacklisted account is rejected at login (see POST /auth/login) with a
+// generic "blocked" message regardless of password correctness.
+app.post('/admin/users/:id/blacklist', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) {
+      return res.status(400).json({ success: false, error: 'A reason is required to blacklist a user.' });
+    }
+    const { rows } = await pool.query(
+      `UPDATE users SET blacklisted = TRUE, blacklist_reason = $1, updated_at = now() WHERE id = $2 RETURNING id, email, blacklisted, blacklist_reason`,
+      [reason, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
+    return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/admin/users/:id/unblacklist', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET blacklisted = FALSE, blacklist_reason = NULL, updated_at = now() WHERE id = $1 RETURNING id, email, blacklisted`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
+    return res.json({ success: true, user: rows[0] });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: generations across every user (not just the caller's own),
+// so support/ops can look up a specific user's outputs without needing
+// direct DB access. Optional `search` matches email, model slug or prompt.
+app.get('/admin/generations', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const search = String(req.query.search || '').trim();
+    const params = [];
+    let where = '';
+    if (search) {
+      params.push(`%${search.toLowerCase()}%`);
+      where = `WHERE lower(u.email) LIKE $1 OR lower(COALESCE(g.model_slug, '')) LIKE $1 OR lower(COALESCE(g.prompt, '')) LIKE $1`;
+    }
+
+    const { rows } = await pool.query(
+      `SELECT g.id, g.wiro_task_id, g.model_slug, g.prompt, g.status, g.total_cost, g.held_amount,
+              g.outputs, g.created_at, g.completed_at, u.id AS user_id, u.email AS user_email
+       FROM generations g
+       JOIN users u ON u.id = g.user_id
+       ${where}
+       ORDER BY g.created_at DESC
+       LIMIT 500`,
+      params
+    );
+    return res.json({ success: true, generations: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: the manual-adjustment / demo-topup audit trail (see
+// credit_transactions table) - "view last transaction" in the admin
+// dashboard.
+app.get('/admin/transactions', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.id, t.amount, t.type, t.reason, t.created_at,
+              u.id AS user_id, u.email AS user_email,
+              admin.id AS created_by_id, admin.email AS created_by_email
+       FROM credit_transactions t
+       JOIN users u ON u.id = t.user_id
+       LEFT JOIN users admin ON admin.id = t.created_by
+       ORDER BY t.created_at DESC
+       LIMIT 200`
+    );
+    return res.json({ success: true, transactions: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: aggregate stats for the dashboard's overview cards - credits
+// actually paid/charged (completed generations' total_cost) today/this
+// week/this month, plus headline counts.
+app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows: revenueRows } = await pool.query(
+      `SELECT
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('day', now())), 0) AS today,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('week', now())), 0) AS this_week,
+         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('month', now())), 0) AS this_month
+       FROM generations
+       WHERE status = 'completed'`
+    );
+    const { rows: countRows } = await pool.query(
+      `SELECT
+         (SELECT COUNT(*) FROM users) AS total_users,
+         (SELECT COUNT(*) FROM users WHERE is_active AND NOT blacklisted) AS active_users,
+         (SELECT COUNT(*) FROM users WHERE blacklisted) AS blacklisted_users,
+         (SELECT COUNT(*) FROM generations) AS total_generations,
+         (SELECT COUNT(*) FROM generations WHERE status = 'pending') AS pending_generations,
+         (SELECT COUNT(*) FROM generations WHERE status = 'failed') AS failed_generations`
+    );
+    const { rows: loginRows } = await pool.query(
+      `SELECT COUNT(*) AS failed_logins_today
+       FROM login_attempts
+       WHERE NOT success AND created_at >= date_trunc('day', now())`
+    );
+
+    const revenue = revenueRows[0] || {};
+    const counts = countRows[0] || {};
+    const logins = loginRows[0] || {};
+
+    return res.json({
+      success: true,
+      stats: {
+        revenueToday: toCreditsNumber(revenue.today),
+        revenueThisWeek: toCreditsNumber(revenue.this_week),
+        revenueThisMonth: toCreditsNumber(revenue.this_month),
+        totalUsers: Number(counts.total_users) || 0,
+        activeUsers: Number(counts.active_users) || 0,
+        blacklistedUsers: Number(counts.blacklisted_users) || 0,
+        totalGenerations: Number(counts.total_generations) || 0,
+        pendingGenerations: Number(counts.pending_generations) || 0,
+        failedGenerations: Number(counts.failed_generations) || 0,
+        failedLoginsToday: Number(logins.failed_logins_today) || 0
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin-only: recent login attempts (success and failure) - optional
+// `failedOnly=true` filters to just unsuccessful attempts, for spotting
+// brute-force / credential-stuffing activity.
+app.get('/admin/login-attempts', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const failedOnly = String(req.query.failedOnly || '').toLowerCase() === 'true';
+    const { rows } = await pool.query(
+      `SELECT id, email, success, reason, ip, user_agent, created_at
+       FROM login_attempts
+       ${failedOnly ? 'WHERE NOT success' : ''}
+       ORDER BY created_at DESC
+       LIMIT 200`
+    );
+    return res.json({ success: true, attempts: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Dynamic Model Execution Endpoint
 app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
+  // Tracks whether a hold has been placed (and how much) so the catch
+  // block below can always refund it if anything after the hold throws -
+  // a hold must never be left deducted without either a generation record
+  // to later settle it, or an immediate refund.
+  let heldAmount = 0;
+  let holdPlaced = false;
+
   try {
     const { model, prompt, tag, ...rest } = req.body || {};
 
@@ -1225,6 +1648,41 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
     if (await isModelSlugBlocked(selectedModel, { exceptKeyword })) {
       return res.status(403).json({ success: false, error: `Model "${selectedModel}" is not available.` });
     }
+
+    // Estimate this run's cost the same way GET /models/estimate-cost does
+    // (same model metadata + the caller's own parameter selections), so the
+    // hold placed below tracks the real, parameter-aware price (duration,
+    // resolution, image count, etc.) instead of a flat guess. Falls back to
+    // FALLBACK_HOLD_CREDITS when no estimate is available at all (unknown
+    // model, or a model with no dynamicprice/cps/approximatelycost data).
+    let estimatedTool = null;
+    try {
+      estimatedTool = await resolveModelDetail(selectedModel);
+    } catch {
+      // Ignore - fall back to FALLBACK_HOLD_CREDITS below rather than
+      // blocking generation just because the estimate lookup failed.
+    }
+    const estimate = estimatedTool ? formatEstimatedCost(estimatedTool, rest) : null;
+    heldAmount = Number.isFinite(estimate?.estimatedAmount) && estimate.estimatedAmount > 0
+      ? estimate.estimatedAmount
+      : FALLBACK_HOLD_CREDITS;
+
+    // Atomically check-and-deduct the hold in one statement (see
+    // holdUserCredits above) - this is what actually prevents a user from
+    // firing off several concurrent generations while low on credits: each
+    // request's hold is serialized against the same balance, so only as
+    // many can succeed as the user can actually afford, no matter how many
+    // land at the same time.
+    const balanceAfterHold = await holdUserCredits(req.user.id, heldAmount);
+    if (balanceAfterHold === null) {
+      return res.status(402).json({
+        success: false,
+        error: 'You have insufficient credits to generate. Please add credits to continue.',
+        code: 'INSUFFICIENT_CREDITS',
+        requiredCredits: heldAmount
+      });
+    }
+    holdPlaced = true;
 
     const options = {
       prompt: prompt || 'A cinematic studio render...'
@@ -1261,24 +1719,31 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
     const run = await client.runModel(selectedModel, options);
 
     if (!run || !run.result) {
+      // Wiro never accepted the job - give the held credits straight back,
+      // there's nothing to settle later.
+      await refundUserCredits(req.user.id, heldAmount);
+      holdPlaced = false;
       return res.status(500).json({ error: run?.errors || 'Model execution failed' });
     }
 
     // Record ownership of this task *before* responding - this is what lets
     // GET /task/:taskId later verify that only the user who created a job
     // can look up its prompt/output, instead of the taskId alone acting as
-    // a de-facto bearer token against Wiro's shared API key.
+    // a de-facto bearer token against Wiro's shared API key. `held_amount`
+    // is stored here too so /task/:taskId can settle (refund or charge the
+    // difference) against exactly what was put on hold for this job.
     try {
       await pool.query(
-        `INSERT INTO generations (user_id, wiro_task_id, model_slug, prompt, status)
-         VALUES ($1, $2, $3, $4, 'pending')
+        `INSERT INTO generations (user_id, wiro_task_id, model_slug, prompt, status, held_amount)
+         VALUES ($1, $2, $3, $4, 'pending', $5)
          ON CONFLICT (wiro_task_id) DO NOTHING`,
-        [req.user.id, run.taskid, selectedModel, options.prompt]
+        [req.user.id, run.taskid, selectedModel, options.prompt, heldAmount]
       );
     } catch (dbError) {
       // Don't fail the whole generation if the ownership record can't be
       // written - but log loudly, since GET /task/:taskId will then deny
-      // the owner access to their own job until this is fixed.
+      // the owner access to their own job until this is fixed, and the
+      // hold placed above won't have anywhere to be settled against.
       console.error('Failed to record generation ownership:', dbError);
     }
 
@@ -1295,9 +1760,20 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
       pending: true,
       status: 'queued',
       taskId: run.taskid,
-      socketaccesstoken: run.socketaccesstoken
+      socketaccesstoken: run.socketaccesstoken,
+      heldCredits: heldAmount,
+      credits: balanceAfterHold
     });
   } catch (error) {
+    // Any unexpected failure after the hold was placed (e.g. client.runModel
+    // threw, or something above it did) must still refund the hold - a
+    // generation that never actually started must never keep a user's
+    // credits.
+    if (holdPlaced) {
+      await refundUserCredits(req.user.id, heldAmount).catch(refundError => {
+        console.error('Failed to refund credit hold after an error:', refundError);
+      });
+    }
     return res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -1344,7 +1820,7 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
     }
 
     const { rows } = await pool.query(
-      'SELECT user_id FROM generations WHERE wiro_task_id = $1',
+      'SELECT user_id, held_amount FROM generations WHERE wiro_task_id = $1',
       [taskId]
     );
     const ownerRecord = rows[0];
@@ -1384,13 +1860,49 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
       const downloadableOutputs = normalizeTaskOutputs(outputs);
       const mediaOutput = downloadableOutputs[0] || null;
       const taskCost = formatTaskCost(task);
+      let settledCredits = null;
 
       try {
-        await pool.query(
+        // Only transition status -> 'completed' (and settle the hold) the
+        // first time this task is observed as finished - this endpoint is
+        // polled repeatedly while/after a job runs, and task.pexit stays
+        // '0' on every subsequent poll, so without the `status <> 'completed'`
+        // guard the hold would be settled again on every poll.
+        const { rows: completedRows } = await pool.query(
           `UPDATE generations SET status = 'completed', total_cost = $1, outputs = $2, completed_at = now()
-           WHERE wiro_task_id = $3`,
+           WHERE wiro_task_id = $3 AND status <> 'completed'
+           RETURNING user_id, held_amount`,
           [taskCost.finalAmount, JSON.stringify(downloadableOutputs), taskId]
         );
+
+        const settlement = completedRows[0];
+        if (settlement) {
+          // Settle the hold placed at submission time against the real,
+          // final cost: a flat 1:1 charge-on-completion (the old behavior)
+          // let a user bank on a generation finishing to "prove" they had
+          // credits, then start several more in parallel before any of
+          // them settled - holding the *estimate* upfront (see
+          // holdUserCredits in POST /generate) closes that gap, and this
+          // is where the estimate gets trued up to what Wiro actually
+          // charged: refund the unused portion if the final cost came in
+          // under the hold, or charge the difference if it came in over.
+          const held = toCreditsNumber(settlement.held_amount);
+          const finalCost = Number.isFinite(taskCost.finalAmount) && taskCost.finalAmount > 0
+            ? taskCost.finalAmount
+            : 0;
+          const difference = finalCost - held;
+
+          if (difference > 0) {
+            await chargeAdditionalCredits(settlement.user_id, difference);
+          } else if (difference < 0) {
+            await refundUserCredits(settlement.user_id, -difference);
+          }
+
+          if (settlement.user_id === req.user.id) {
+            const { rows: balanceRows } = await pool.query('SELECT credits FROM users WHERE id = $1', [settlement.user_id]);
+            settledCredits = balanceRows[0] ? toCreditsNumber(balanceRows[0].credits) : null;
+          }
+        }
       } catch (dbError) {
         console.error('Failed to update generation record on completion:', dbError);
       }
@@ -1405,16 +1917,39 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
         currencySymbol: taskCost.currencySymbol,
         downloads: downloadableOutputs,
         outputs,
-        task: task
+        task: task,
+        ...(settledCredits != null ? { credits: settledCredits } : {})
       });
     }
 
     const failureReason = extractFailureReason(task);
+    let creditsAfterRefund = null;
     try {
-      await pool.query(
-        `UPDATE generations SET status = 'failed', completed_at = now() WHERE wiro_task_id = $1`,
+      // Guard against double-refunding the hold: this endpoint is polled
+      // repeatedly, and a failed task can also be revisited later via
+      // "retrieve a previous generation" - only the transition into
+      // 'failed' (never already 'failed' or 'completed') should trigger a
+      // refund.
+      const { rows: failedRows } = await pool.query(
+        `UPDATE generations SET status = 'failed', completed_at = now()
+         WHERE wiro_task_id = $1 AND status NOT IN ('failed', 'completed')
+         RETURNING user_id, held_amount`,
         [taskId]
       );
+
+      const refundTarget = failedRows[0];
+      if (refundTarget) {
+        const held = toCreditsNumber(refundTarget.held_amount);
+        // The task never produced a billable result, so the full hold
+        // placed at submission time is returned in full - the user is
+        // never charged for a generation that failed.
+        await refundUserCredits(refundTarget.user_id, held);
+
+        if (refundTarget.user_id === req.user.id) {
+          const { rows: balanceRows } = await pool.query('SELECT credits FROM users WHERE id = $1', [refundTarget.user_id]);
+          creditsAfterRefund = balanceRows[0] ? toCreditsNumber(balanceRows[0].credits) : null;
+        }
+      }
     } catch (dbError) {
       console.error('Failed to update generation record on failure:', dbError);
     }
@@ -1424,7 +1959,8 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
       error: failureReason,
       debugOutput: task.debugoutput,
       taskId: task.id,
-      task: task
+      task: task,
+      ...(creditsAfterRefund != null ? { credits: creditsAfterRefund } : {})
     });
   } catch (error) {
     if (error instanceof WiroApiError) {

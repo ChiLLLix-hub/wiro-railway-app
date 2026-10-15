@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Dashboard - Mygenx Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
+  <style>
+    html { scroll-behavior: smooth; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+  <!-- ==================== TOP BAR / HEADER ==================== -->
+  <header class="sticky top-0 z-40 bg-slate-950/80 backdrop-blur border-b border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 md:px-8 py-3 flex items-center justify-between gap-4">
+      <a href="index.html" class="flex items-center gap-2 shrink-0">
+        <span class="px-3 py-1 rounded-lg bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white text-sm">MYGENX</span>
+        <span class="font-extrabold text-lg text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 hidden sm:inline">Studio</span>
+      </a>
+      <div class="flex items-center gap-2 shrink-0">
+        <button id="credits-badge" type="button" class="text-xs font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-lg hover:bg-emerald-500/20 transition" title="Add credits">
+          <span id="credits-badge-amount">0</span> credits
+        </button>
+        <a href="index.html" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Generate</a>
+        <a id="admin-link" href="admin.html" class="hidden text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Admin</a>
+        <span id="auth-user-email" class="text-sm text-slate-300 truncate max-w-[10rem]"></span>
+        <button id="logout-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Log out</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Shown only when there is no valid auth token at all - dashboard.html
+       requires a logged-in user, unlike index.html which is browsable
+       while signed out. -->
+  <div id="signed-out-notice" class="hidden max-w-xl mx-auto mt-20 text-center space-y-4 px-4">
+    <p class="text-lg text-slate-300">Please log in to view your dashboard.</p>
+    <a href="index.html" class="inline-block text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-5 py-2.5 rounded-xl shadow-lg transition">Go to Studio</a>
+  </div>
+
+  <main id="dashboard-main" class="hidden max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
+    <h1 class="text-2xl font-bold">My Dashboard</h1>
+
+    <!-- ==================== OVERVIEW CARDS ==================== -->
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Credits left</p>
+        <p id="stat-credits" class="text-2xl font-bold text-emerald-300 mt-1">0</p>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Last login</p>
+        <p id="stat-last-login" class="text-lg font-semibold mt-1">-</p>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Total generations</p>
+        <p id="stat-total-generations" class="text-2xl font-bold mt-1">0</p>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Spend today / week / month</p>
+        <p id="stat-spend" class="text-sm font-semibold mt-1">-</p>
+      </div>
+    </section>
+
+    <!-- ==================== ADD CREDITS ==================== -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-bold">Credits</h2>
+        <button id="add-credits-btn" type="button" class="text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition">Add Credits</button>
+      </div>
+      <p class="text-xs text-slate-400">Demo payment only - no real charge is made yet.</p>
+    </section>
+
+    <!-- ==================== GENERATION HISTORY ==================== -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <h2 class="text-lg font-bold">Generation History</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="text-slate-400 border-b border-slate-800">
+            <tr>
+              <th class="py-2 pr-4">Task ID</th>
+              <th class="py-2 pr-4">Model</th>
+              <th class="py-2 pr-4">Status</th>
+              <th class="py-2 pr-4">Cost</th>
+              <th class="py-2 pr-4">Output</th>
+              <th class="py-2 pr-4">Date</th>
+            </tr>
+          </thead>
+          <tbody id="generations-tbody" class="divide-y divide-slate-800"></tbody>
+        </table>
+        <p id="generations-empty" class="hidden text-sm text-slate-500 py-4">No generations yet.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ==================== ADD CREDITS (DUMMY PAYMENT) MODAL ==================== -->
+  <div id="credits-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 relative">
+      <button id="credits-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
+      <h3 class="text-lg font-bold text-slate-100">Add Credits</h3>
+      <p class="text-slate-400 text-xs">Demo checkout - no real payment is processed yet.</p>
+      <div id="credits-modal-error" class="hidden text-xs text-red-400"></div>
+      <div class="space-y-2">
+        <button data-package="starter" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">
+          <span class="font-semibold">Starter</span> - 10 credits
+        </button>
+        <button data-package="pro" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">
+          <span class="font-semibold">Pro</span> - 50 credits
+        </button>
+        <button data-package="studio" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">
+          <span class="font-semibold">Studio</span> - 100 credits
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  const DEFAULT_BACKEND_BASE_URL = 'https://wiro-railway-app-production.up.railway.app';
+  const CUSTOM_BACKEND_BASE_URL = String(window.WIRO_API_BASE_URL || window.__WIRO_API_BASE_URL || '').replace(/\/+$/, '');
+  const BACKEND_BASE_URL = CUSTOM_BACKEND_BASE_URL || DEFAULT_BACKEND_BASE_URL;
+  const RAILWAY_ME_URL = `${BACKEND_BASE_URL}/me`;
+  const RAILWAY_ME_SUMMARY_URL = `${BACKEND_BASE_URL}/me/summary`;
+  const RAILWAY_ME_GENERATIONS_URL = `${BACKEND_BASE_URL}/me/generations`;
+  const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/me/credits/topup`;
+
+  const AUTH_TOKEN_STORAGE_KEY = 'wiroAuthToken';
+
+  function getAuthToken() {
+    try { return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || ''; } catch { return ''; }
+  }
+  function clearAuthToken() {
+    try { window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY); } catch { /* ignore */ }
+  }
+  function withAuthHeaders(init = {}) {
+    const token = getAuthToken();
+    const headers = new Headers(init.headers || {});
+    if (token) headers.set('Authorization', 'Bear' + 'er ' + token);
+    return { ...init, headers };
+  }
+  async function authFetch(url, init = {}) {
+    const res = await fetch(url, withAuthHeaders(init));
+    if (res.status === 401) {
+      clearAuthToken();
+      window.location.href = 'index.html';
+    }
+    return res;
+  }
+
+  function formatDate(value) {
+    if (!value) return '-';
+    try { return new Date(value).toLocaleString(); } catch { return String(value); }
+  }
+  function formatCost(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(2) : '-';
+  }
+
+  async function loadMe() {
+    const res = await authFetch(RAILWAY_ME_URL, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load account.');
+    return data.user;
+  }
+
+  async function loadSummary() {
+    const res = await authFetch(RAILWAY_ME_SUMMARY_URL, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load summary.');
+    return data.summary;
+  }
+
+  async function loadGenerations() {
+    const res = await authFetch(RAILWAY_ME_GENERATIONS_URL, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load generations.');
+    return data.generations || [];
+  }
+
+  function renderGenerations(rows) {
+    const tbody = document.getElementById('generations-tbody');
+    const emptyEl = document.getElementById('generations-empty');
+    tbody.innerHTML = '';
+    emptyEl.classList.toggle('hidden', rows.length > 0);
+    for (const row of rows) {
+      const tr = document.createElement('tr');
+      const outputs = Array.isArray(row.outputs) ? row.outputs : [];
+      const firstOutputUrl = outputs[0]?.url || outputs[0];
+      const cost = row.total_cost != null ? formatCost(row.total_cost) : (row.held_amount != null ? `${formatCost(row.held_amount)} (held)` : '-');
+      tr.innerHTML = `
+        <td class="py-2 pr-4 font-mono text-xs">${row.wiro_task_id || row.id}</td>
+        <td class="py-2 pr-4">${row.model_slug || '-'}</td>
+        <td class="py-2 pr-4 capitalize">${row.status || '-'}</td>
+        <td class="py-2 pr-4">${cost}</td>
+        <td class="py-2 pr-4">${firstOutputUrl ? `<a href="${firstOutputUrl}" target="_blank" rel="noopener" class="text-blue-400 hover:underline">View</a>` : '-'}</td>
+        <td class="py-2 pr-4 text-slate-400">${formatDate(row.created_at)}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function refreshDashboard() {
+    const [user, summary, generations] = await Promise.all([loadMe(), loadSummary(), loadGenerations()]);
+
+    document.getElementById('auth-user-email').textContent = user.email;
+    document.getElementById('admin-link').classList.toggle('hidden', user.role !== 'admin');
+    document.getElementById('credits-badge-amount').textContent = Number.isFinite(summary.credits) ? summary.credits : 0;
+    document.getElementById('stat-credits').textContent = Number.isFinite(summary.credits) ? summary.credits : 0;
+    document.getElementById('stat-last-login').textContent = formatDate(summary.lastLoginAt);
+    document.getElementById('stat-total-generations').textContent = summary.totalGenerations ?? 0;
+    document.getElementById('stat-spend').textContent =
+      `${formatCost(summary.spendToday)} / ${formatCost(summary.spendThisWeek)} / ${formatCost(summary.spendThisMonth)}`;
+
+    renderGenerations(generations);
+  }
+
+  function openCreditsModal() {
+    document.getElementById('credits-modal').classList.remove('hidden');
+    document.getElementById('credits-modal-error').classList.add('hidden');
+  }
+  function closeCreditsModal() {
+    document.getElementById('credits-modal').classList.add('hidden');
+  }
+
+  document.getElementById('add-credits-btn').addEventListener('click', openCreditsModal);
+  document.getElementById('credits-modal-close').addEventListener('click', closeCreditsModal);
+  document.getElementById('logout-btn').addEventListener('click', () => {
+    clearAuthToken();
+    window.location.href = 'index.html';
+  });
+
+  document.querySelectorAll('.credits-package-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const packageId = btn.dataset.package;
+      const errorEl = document.getElementById('credits-modal-error');
+      errorEl.classList.add('hidden');
+      try {
+        const res = await authFetch(RAILWAY_CREDITS_TOPUP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ packageId })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) throw new Error(data.error || 'Top-up failed.');
+        closeCreditsModal();
+        await refreshDashboard();
+      } catch (error) {
+        errorEl.textContent = error.message;
+        errorEl.classList.remove('hidden');
+      }
+    });
+  });
+
+  (async function init() {
+    if (!getAuthToken()) {
+      document.getElementById('signed-out-notice').classList.remove('hidden');
+      return;
+    }
+    try {
+      await refreshDashboard();
+      document.getElementById('dashboard-main').classList.remove('hidden');
+    } catch (error) {
+      document.getElementById('signed-out-notice').classList.remove('hidden');
+    }
+  })();
+  </script>
+</body>
+</html>

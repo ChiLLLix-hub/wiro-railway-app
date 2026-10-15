@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard - Mygenx Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
+  <style>
+    html { scroll-behavior: smooth; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+  <!-- ==================== TOP BAR / HEADER ==================== -->
+  <header class="sticky top-0 z-40 bg-slate-950/80 backdrop-blur border-b border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 md:px-8 py-3 flex items-center justify-between gap-4">
+      <a href="index.html" class="flex items-center gap-2 shrink-0">
+        <span class="px-3 py-1 rounded-lg bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white text-sm">MYGENX</span>
+        <span class="font-extrabold text-lg text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 hidden sm:inline">Admin</span>
+      </a>
+      <div class="flex items-center gap-2 shrink-0">
+        <a href="dashboard.html" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">My Dashboard</a>
+        <a href="index.html" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Generate</a>
+        <span id="auth-user-email" class="text-sm text-slate-300 truncate max-w-[10rem]"></span>
+        <button id="logout-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Log out</button>
+      </div>
+    </div>
+  </header>
+
+  <div id="denied-notice" class="hidden max-w-xl mx-auto mt-20 text-center space-y-4 px-4">
+    <p class="text-lg text-slate-300">You must be logged in as an admin to view this page.</p>
+    <a href="index.html" class="inline-block text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-5 py-2.5 rounded-xl shadow-lg transition">Go to Studio</a>
+  </div>
+
+  <main id="admin-main" class="hidden max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
+    <h1 class="text-2xl font-bold">Admin Dashboard</h1>
+
+    <!-- ==================== STATS ==================== -->
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Revenue today / week / month</p>
+        <p id="stat-revenue" class="text-sm font-semibold mt-1">-</p>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Total / active / blacklisted users</p>
+        <p id="stat-users" class="text-sm font-semibold mt-1">-</p>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Total / pending / failed generations</p>
+        <p id="stat-generations" class="text-sm font-semibold mt-1">-</p>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Failed logins today</p>
+        <p id="stat-failed-logins" class="text-2xl font-bold mt-1">0</p>
+      </div>
+    </section>
+
+    <!-- ==================== USERS ==================== -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <h2 class="text-lg font-bold">Users</h2>
+        <input id="users-search" type="search" placeholder="Search by email or name..."
+          class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 w-64">
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="text-slate-400 border-b border-slate-800">
+            <tr>
+              <th class="py-2 pr-4">Email</th>
+              <th class="py-2 pr-4">Role</th>
+              <th class="py-2 pr-4">Credits</th>
+              <th class="py-2 pr-4">Status</th>
+              <th class="py-2 pr-4">Last login</th>
+              <th class="py-2 pr-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="users-tbody" class="divide-y divide-slate-800"></tbody>
+        </table>
+        <p id="users-empty" class="hidden text-sm text-slate-500 py-4">No users found.</p>
+      </div>
+    </section>
+
+    <!-- ==================== GENERATIONS ==================== -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <h2 class="text-lg font-bold">User Generations</h2>
+        <input id="generations-search" type="search" placeholder="Search by email, model or prompt..."
+          class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 w-64">
+      </div>
+      <div class="overflow-x-auto max-h-96 overflow-y-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="text-slate-400 border-b border-slate-800 sticky top-0 bg-slate-900">
+            <tr>
+              <th class="py-2 pr-4">User</th>
+              <th class="py-2 pr-4">Task ID</th>
+              <th class="py-2 pr-4">Model</th>
+              <th class="py-2 pr-4">Status</th>
+              <th class="py-2 pr-4">Cost</th>
+              <th class="py-2 pr-4">Output</th>
+              <th class="py-2 pr-4">Date</th>
+            </tr>
+          </thead>
+          <tbody id="generations-tbody" class="divide-y divide-slate-800"></tbody>
+        </table>
+        <p id="generations-empty" class="hidden text-sm text-slate-500 py-4">No generations found.</p>
+      </div>
+    </section>
+
+    <!-- ==================== TRANSACTIONS ==================== -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <h2 class="text-lg font-bold">Credit Transactions</h2>
+      <div class="overflow-x-auto max-h-80 overflow-y-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="text-slate-400 border-b border-slate-800 sticky top-0 bg-slate-900">
+            <tr>
+              <th class="py-2 pr-4">User</th>
+              <th class="py-2 pr-4">Amount</th>
+              <th class="py-2 pr-4">Type</th>
+              <th class="py-2 pr-4">Reason</th>
+              <th class="py-2 pr-4">By</th>
+              <th class="py-2 pr-4">Date</th>
+            </tr>
+          </thead>
+          <tbody id="transactions-tbody" class="divide-y divide-slate-800"></tbody>
+        </table>
+        <p id="transactions-empty" class="hidden text-sm text-slate-500 py-4">No transactions yet.</p>
+      </div>
+    </section>
+
+    <!-- ==================== LOGIN ATTEMPTS ==================== -->
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <h2 class="text-lg font-bold">Login Attempts</h2>
+        <label class="flex items-center gap-2 text-sm text-slate-300">
+          <input id="failed-only-checkbox" type="checkbox" class="rounded border-slate-700 bg-slate-800">
+          Failed only
+        </label>
+      </div>
+      <div class="overflow-x-auto max-h-80 overflow-y-auto">
+        <table class="w-full text-sm text-left">
+          <thead class="text-slate-400 border-b border-slate-800 sticky top-0 bg-slate-900">
+            <tr>
+              <th class="py-2 pr-4">Email</th>
+              <th class="py-2 pr-4">Result</th>
+              <th class="py-2 pr-4">Reason</th>
+              <th class="py-2 pr-4">IP</th>
+              <th class="py-2 pr-4">Date</th>
+            </tr>
+          </thead>
+          <tbody id="login-attempts-tbody" class="divide-y divide-slate-800"></tbody>
+        </table>
+        <p id="login-attempts-empty" class="hidden text-sm text-slate-500 py-4">No login attempts recorded.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ==================== CREDIT ADJUST MODAL ==================== -->
+  <div id="credit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 relative">
+      <button id="credit-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
+      <h3 class="text-lg font-bold text-slate-100">Adjust Credits</h3>
+      <p id="credit-modal-user" class="text-slate-400 text-xs"></p>
+      <form id="credit-form" class="space-y-3">
+        <input id="credit-amount" type="number" step="0.01" required placeholder="Amount (negative to remove)"
+          class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <input id="credit-reason" type="text" required placeholder="Reason (required)"
+          class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <div id="credit-form-error" class="hidden text-xs text-red-400"></div>
+        <button type="submit" class="w-full text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2.5 rounded-xl shadow-lg transition">Apply</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================== BLACKLIST MODAL ==================== -->
+  <div id="blacklist-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 relative">
+      <button id="blacklist-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
+      <h3 class="text-lg font-bold text-slate-100">Blacklist User</h3>
+      <p id="blacklist-modal-user" class="text-slate-400 text-xs"></p>
+      <form id="blacklist-form" class="space-y-3">
+        <input id="blacklist-reason" type="text" required placeholder="Reason (required)"
+          class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <div id="blacklist-form-error" class="hidden text-xs text-red-400"></div>
+        <button type="submit" class="w-full text-sm font-semibold bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white px-4 py-2.5 rounded-xl shadow-lg transition">Blacklist</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+  const DEFAULT_BACKEND_BASE_URL = 'https://wiro-railway-app-production.up.railway.app';
+  const CUSTOM_BACKEND_BASE_URL = String(window.WIRO_API_BASE_URL || window.__WIRO_API_BASE_URL || '').replace(/\/+$/, '');
+  const BACKEND_BASE_URL = CUSTOM_BACKEND_BASE_URL || DEFAULT_BACKEND_BASE_URL;
+  const RAILWAY_ME_URL = `${BACKEND_BASE_URL}/me`;
+  const RAILWAY_ADMIN_USERS_URL = `${BACKEND_BASE_URL}/admin/users`;
+  const RAILWAY_ADMIN_GENERATIONS_URL = `${BACKEND_BASE_URL}/admin/generations`;
+  const RAILWAY_ADMIN_TRANSACTIONS_URL = `${BACKEND_BASE_URL}/admin/transactions`;
+  const RAILWAY_ADMIN_STATS_URL = `${BACKEND_BASE_URL}/admin/stats`;
+  const RAILWAY_ADMIN_LOGIN_ATTEMPTS_URL = `${BACKEND_BASE_URL}/admin/login-attempts`;
+
+  const AUTH_TOKEN_STORAGE_KEY = 'wiroAuthToken';
+
+  function getAuthToken() {
+    try { return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || ''; } catch { return ''; }
+  }
+  function clearAuthToken() {
+    try { window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY); } catch { /* ignore */ }
+  }
+  function withAuthHeaders(init = {}) {
+    const token = getAuthToken();
+    const headers = new Headers(init.headers || {});
+    if (token) headers.set('Authorization', 'Bear' + 'er ' + token);
+    return { ...init, headers };
+  }
+  async function authFetch(url, init = {}) {
+    const res = await fetch(url, withAuthHeaders(init));
+    if (res.status === 401) {
+      clearAuthToken();
+      window.location.href = 'index.html';
+    }
+    return res;
+  }
+
+  function formatDate(value) {
+    if (!value) return '-';
+    try { return new Date(value).toLocaleString(); } catch { return String(value); }
+  }
+  function formatCost(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(2) : '-';
+  }
+  function escapeHtml(str) {
+    return String(str ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  async function fetchJson(url) {
+    const res = await authFetch(url, { cache: 'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || `Request failed: ${url}`);
+    return data;
+  }
+
+  async function postJson(url, body) {
+    const res = await authFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.error || `Request failed: ${url}`);
+    return data;
+  }
+
+  async function loadStats() {
+    const { stats } = await fetchJson(RAILWAY_ADMIN_STATS_URL);
+    document.getElementById('stat-revenue').textContent =
+      `${formatCost(stats.revenueToday)} / ${formatCost(stats.revenueThisWeek)} / ${formatCost(stats.revenueThisMonth)}`;
+    document.getElementById('stat-users').textContent =
+      `${stats.totalUsers} / ${stats.activeUsers} / ${stats.blacklistedUsers}`;
+    document.getElementById('stat-generations').textContent =
+      `${stats.totalGenerations} / ${stats.pendingGenerations} / ${stats.failedGenerations}`;
+    document.getElementById('stat-failed-logins').textContent = stats.failedLoginsToday;
+  }
+
+  async function loadUsers(search = '') {
+    const url = search ? `${RAILWAY_ADMIN_USERS_URL}?search=${encodeURIComponent(search)}` : RAILWAY_ADMIN_USERS_URL;
+    const { users } = await fetchJson(url);
+    renderUsers(users);
+  }
+
+  function renderUsers(users) {
+    const tbody = document.getElementById('users-tbody');
+    const emptyEl = document.getElementById('users-empty');
+    tbody.innerHTML = '';
+    emptyEl.classList.toggle('hidden', users.length > 0);
+    for (const user of users) {
+      const tr = document.createElement('tr');
+      const statusLabel = user.blacklisted ? 'Blacklisted' : (user.is_active ? 'Active' : 'Blocked');
+      const statusClass = user.blacklisted ? 'text-red-400' : (user.is_active ? 'text-emerald-400' : 'text-amber-400');
+      tr.innerHTML = `
+        <td class="py-2 pr-4">${escapeHtml(user.email)}</td>
+        <td class="py-2 pr-4">${escapeHtml(user.role)}</td>
+        <td class="py-2 pr-4">${formatCost(user.credits)}</td>
+        <td class="py-2 pr-4 ${statusClass}">${statusLabel}</td>
+        <td class="py-2 pr-4 text-slate-400">${formatDate(user.last_login_at)}</td>
+        <td class="py-2 pr-4 space-x-1 whitespace-nowrap">
+          <button class="credit-btn text-xs px-2 py-1 rounded border border-slate-700 hover:bg-slate-800" data-id="${user.id}" data-email="${escapeHtml(user.email)}">Credits</button>
+          ${user.is_active
+            ? `<button class="block-btn text-xs px-2 py-1 rounded border border-amber-700 text-amber-400 hover:bg-amber-900/30" data-id="${user.id}">Block</button>`
+            : `<button class="unblock-btn text-xs px-2 py-1 rounded border border-emerald-700 text-emerald-400 hover:bg-emerald-900/30" data-id="${user.id}">Unblock</button>`}
+          ${user.blacklisted
+            ? `<button class="unblacklist-btn text-xs px-2 py-1 rounded border border-emerald-700 text-emerald-400 hover:bg-emerald-900/30" data-id="${user.id}">Unblacklist</button>`
+            : `<button class="blacklist-btn text-xs px-2 py-1 rounded border border-red-700 text-red-400 hover:bg-red-900/30" data-id="${user.id}" data-email="${escapeHtml(user.email)}">Blacklist</button>`}
+        </td>
+      `;
+      tbody.appendChild(tr);
+    }
+    attachUserRowHandlers();
+  }
+
+  function attachUserRowHandlers() {
+    document.querySelectorAll('.credit-btn').forEach(btn => {
+      btn.addEventListener('click', () => openCreditModal(btn.dataset.id, btn.dataset.email));
+    });
+    document.querySelectorAll('.block-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await postJson(`${RAILWAY_ADMIN_USERS_URL}/${btn.dataset.id}/block`);
+        await loadUsers(document.getElementById('users-search').value.trim());
+      });
+    });
+    document.querySelectorAll('.unblock-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await postJson(`${RAILWAY_ADMIN_USERS_URL}/${btn.dataset.id}/unblock`);
+        await loadUsers(document.getElementById('users-search').value.trim());
+      });
+    });
+    document.querySelectorAll('.blacklist-btn').forEach(btn => {
+      btn.addEventListener('click', () => openBlacklistModal(btn.dataset.id, btn.dataset.email));
+    });
+    document.querySelectorAll('.unblacklist-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await postJson(`${RAILWAY_ADMIN_USERS_URL}/${btn.dataset.id}/unblacklist`);
+        await loadUsers(document.getElementById('users-search').value.trim());
+      });
+    });
+  }
+
+  let creditModalUserId = null;
+  function openCreditModal(userId, email) {
+    creditModalUserId = userId;
+    document.getElementById('credit-modal-user').textContent = email;
+    document.getElementById('credit-amount').value = '';
+    document.getElementById('credit-reason').value = '';
+    document.getElementById('credit-form-error').classList.add('hidden');
+    document.getElementById('credit-modal').classList.remove('hidden');
+  }
+  function closeCreditModal() {
+    document.getElementById('credit-modal').classList.add('hidden');
+  }
+
+  let blacklistModalUserId = null;
+  function openBlacklistModal(userId, email) {
+    blacklistModalUserId = userId;
+    document.getElementById('blacklist-modal-user').textContent = email;
+    document.getElementById('blacklist-reason').value = '';
+    document.getElementById('blacklist-form-error').classList.add('hidden');
+    document.getElementById('blacklist-modal').classList.remove('hidden');
+  }
+  function closeBlacklistModal() {
+    document.getElementById('blacklist-modal').classList.add('hidden');
+  }
+
+  document.getElementById('credit-modal-close').addEventListener('click', closeCreditModal);
+  document.getElementById('blacklist-modal-close').addEventListener('click', closeBlacklistModal);
+
+  document.getElementById('credit-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const amount = Number(document.getElementById('credit-amount').value);
+    const reason = document.getElementById('credit-reason').value.trim();
+    const errorEl = document.getElementById('credit-form-error');
+    errorEl.classList.add('hidden');
+    try {
+      await postJson(`${RAILWAY_ADMIN_USERS_URL}/${creditModalUserId}/credits`, { amount, reason });
+      closeCreditModal();
+      await loadUsers(document.getElementById('users-search').value.trim());
+      await loadTransactions();
+    } catch (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+    }
+  });
+
+  document.getElementById('blacklist-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const reason = document.getElementById('blacklist-reason').value.trim();
+    const errorEl = document.getElementById('blacklist-form-error');
+    errorEl.classList.add('hidden');
+    try {
+      await postJson(`${RAILWAY_ADMIN_USERS_URL}/${blacklistModalUserId}/blacklist`, { reason });
+      closeBlacklistModal();
+      await loadUsers(document.getElementById('users-search').value.trim());
+    } catch (error) {
+      errorEl.textContent = error.message;
+      errorEl.classList.remove('hidden');
+    }
+  });
+
+  async function loadGenerations(search = '') {
+    const url = search ? `${RAILWAY_ADMIN_GENERATIONS_URL}?search=${encodeURIComponent(search)}` : RAILWAY_ADMIN_GENERATIONS_URL;
+    const { generations } = await fetchJson(url);
+    const tbody = document.getElementById('generations-tbody');
+    const emptyEl = document.getElementById('generations-empty');
+    tbody.innerHTML = '';
+    emptyEl.classList.toggle('hidden', generations.length > 0);
+    for (const row of generations) {
+      const tr = document.createElement('tr');
+      const outputs = Array.isArray(row.outputs) ? row.outputs : [];
+      const firstOutputUrl = outputs[0]?.url || outputs[0];
+      const cost = row.total_cost != null ? formatCost(row.total_cost) : (row.held_amount != null ? `${formatCost(row.held_amount)} (held)` : '-');
+      tr.innerHTML = `
+        <td class="py-2 pr-4">${escapeHtml(row.user_email)}</td>
+        <td class="py-2 pr-4 font-mono text-xs">${escapeHtml(row.wiro_task_id || row.id)}</td>
+        <td class="py-2 pr-4">${escapeHtml(row.model_slug)}</td>
+        <td class="py-2 pr-4 capitalize">${escapeHtml(row.status)}</td>
+        <td class="py-2 pr-4">${cost}</td>
+        <td class="py-2 pr-4">${firstOutputUrl ? `<a href="${firstOutputUrl}" target="_blank" rel="noopener" class="text-blue-400 hover:underline">View</a>` : '-'}</td>
+        <td class="py-2 pr-4 text-slate-400">${formatDate(row.created_at)}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function loadTransactions() {
+    const { transactions } = await fetchJson(RAILWAY_ADMIN_TRANSACTIONS_URL);
+    const tbody = document.getElementById('transactions-tbody');
+    const emptyEl = document.getElementById('transactions-empty');
+    tbody.innerHTML = '';
+    emptyEl.classList.toggle('hidden', transactions.length > 0);
+    for (const row of transactions) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="py-2 pr-4">${escapeHtml(row.user_email)}</td>
+        <td class="py-2 pr-4 ${Number(row.amount) >= 0 ? 'text-emerald-400' : 'text-red-400'}">${formatCost(row.amount)}</td>
+        <td class="py-2 pr-4">${escapeHtml(row.type)}</td>
+        <td class="py-2 pr-4">${escapeHtml(row.reason)}</td>
+        <td class="py-2 pr-4">${escapeHtml(row.created_by_email || '-')}</td>
+        <td class="py-2 pr-4 text-slate-400">${formatDate(row.created_at)}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  async function loadLoginAttempts(failedOnly = false) {
+    const url = failedOnly ? `${RAILWAY_ADMIN_LOGIN_ATTEMPTS_URL}?failedOnly=true` : RAILWAY_ADMIN_LOGIN_ATTEMPTS_URL;
+    const { attempts } = await fetchJson(url);
+    const tbody = document.getElementById('login-attempts-tbody');
+    const emptyEl = document.getElementById('login-attempts-empty');
+    tbody.innerHTML = '';
+    emptyEl.classList.toggle('hidden', attempts.length > 0);
+    for (const row of attempts) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="py-2 pr-4">${escapeHtml(row.email)}</td>
+        <td class="py-2 pr-4 ${row.success ? 'text-emerald-400' : 'text-red-400'}">${row.success ? 'Success' : 'Failed'}</td>
+        <td class="py-2 pr-4">${escapeHtml(row.reason || '-')}</td>
+        <td class="py-2 pr-4 text-slate-400">${escapeHtml(row.ip || '-')}</td>
+        <td class="py-2 pr-4 text-slate-400">${formatDate(row.created_at)}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  let usersSearchTimer = null;
+  document.getElementById('users-search').addEventListener('input', (e) => {
+    clearTimeout(usersSearchTimer);
+    usersSearchTimer = setTimeout(() => loadUsers(e.target.value.trim()), 300);
+  });
+
+  let generationsSearchTimer = null;
+  document.getElementById('generations-search').addEventListener('input', (e) => {
+    clearTimeout(generationsSearchTimer);
+    generationsSearchTimer = setTimeout(() => loadGenerations(e.target.value.trim()), 300);
+  });
+
+  document.getElementById('failed-only-checkbox').addEventListener('change', (e) => {
+    loadLoginAttempts(e.target.checked);
+  });
+
+  document.getElementById('logout-btn').addEventListener('click', () => {
+    clearAuthToken();
+    window.location.href = 'index.html';
+  });
+
+  (async function init() {
+    if (!getAuthToken()) {
+      document.getElementById('denied-notice').classList.remove('hidden');
+      return;
+    }
+    try {
+      const { user } = await fetchJson(RAILWAY_ME_URL);
+      if (user.role !== 'admin') {
+        document.getElementById('denied-notice').classList.remove('hidden');
+        return;
+      }
+      document.getElementById('auth-user-email').textContent = user.email;
+      document.getElementById('admin-main').classList.remove('hidden');
+      await Promise.all([loadStats(), loadUsers(), loadGenerations(), loadTransactions(), loadLoginAttempts()]);
+    } catch (error) {
+      document.getElementById('denied-notice').classList.remove('hidden');
+    }
+  })();
+  </script>
+</body>
+</html>
