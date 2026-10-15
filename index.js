@@ -1550,22 +1550,23 @@ app.get('/admin/transactions', apiRateLimiter, requireAuth, requireAdmin, async 
   }
 });
 
-// Admin-only: aggregate stats for the dashboard's overview cards - credits
-// actually paid/charged (completed generations' total_cost) today/this
-// week/this month, plus headline counts.
+// Admin-only: aggregate credit top-ups today/this week/this month, the
+// combined available user balance, and headline counts. Demo top-ups are
+// the only purchase flow currently supported; manual adjustments are excluded.
 app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
   try {
     const { rows: revenueRows } = await pool.query(
       `SELECT
-         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('day', now())), 0) AS today,
-         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('week', now())), 0) AS this_week,
-         COALESCE(SUM(total_cost) FILTER (WHERE completed_at >= date_trunc('month', now())), 0) AS this_month
-       FROM generations
-       WHERE status = 'completed'`
+         COALESCE(SUM(amount) FILTER (WHERE created_at >= date_trunc('day', now())), 0) AS today,
+         COALESCE(SUM(amount) FILTER (WHERE created_at >= date_trunc('week', now())), 0) AS this_week,
+         COALESCE(SUM(amount) FILTER (WHERE created_at >= date_trunc('month', now())), 0) AS this_month
+       FROM credit_transactions
+       WHERE type = 'topup_demo' AND amount > 0`
     );
     const { rows: countRows } = await pool.query(
       `SELECT
          (SELECT COUNT(*) FROM users) AS total_users,
+         (SELECT COALESCE(SUM(credits), 0) FROM users) AS total_unused_credits,
          (SELECT COUNT(*) FROM users WHERE is_active AND NOT blacklisted) AS active_users,
          (SELECT COUNT(*) FROM users WHERE blacklisted) AS blacklisted_users,
          (SELECT COUNT(*) FROM generations) AS total_generations,
@@ -1588,6 +1589,7 @@ app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, r
         revenueToday: toCreditsNumber(revenue.today),
         revenueThisWeek: toCreditsNumber(revenue.this_week),
         revenueThisMonth: toCreditsNumber(revenue.this_month),
+        totalUnusedCredits: toCreditsNumber(counts.total_unused_credits),
         totalUsers: Number(counts.total_users) || 0,
         activeUsers: Number(counts.active_users) || 0,
         blacklistedUsers: Number(counts.blacklisted_users) || 0,

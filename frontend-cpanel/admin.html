@@ -44,6 +44,12 @@
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
         <p class="text-xs text-slate-400">Revenue today / week / month</p>
         <p id="stat-revenue" class="text-sm font-semibold mt-1">-</p>
+        <p class="text-xs text-slate-500 mt-1">Credit top-ups only (currently demo, not real payments).</p>
+      </div>
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
+        <p class="text-xs text-slate-400">Total unused user credits</p>
+        <p id="stat-unused-credits" class="text-2xl font-bold mt-1">-</p>
+        <p class="text-xs text-slate-500 mt-1">Combined available balance of all users; excludes credits held for pending generations.</p>
       </div>
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
         <p class="text-xs text-slate-400">Total / active / blacklisted users</p>
@@ -258,6 +264,7 @@
     const { stats } = await fetchJson(RAILWAY_ADMIN_STATS_URL);
     document.getElementById('stat-revenue').textContent =
       `${formatCost(stats.revenueToday)} / ${formatCost(stats.revenueThisWeek)} / ${formatCost(stats.revenueThisMonth)}`;
+    document.getElementById('stat-unused-credits').textContent = formatCost(stats.totalUnusedCredits);
     document.getElementById('stat-users').textContent =
       `${stats.totalUsers} / ${stats.activeUsers} / ${stats.blacklistedUsers}`;
     document.getElementById('stat-generations').textContent =
@@ -367,6 +374,7 @@
       closeCreditModal();
       await loadUsers(document.getElementById('users-search').value.trim());
       await loadTransactions();
+      await loadStats();
     } catch (error) {
       errorEl.textContent = error.message;
       errorEl.classList.remove('hidden');
