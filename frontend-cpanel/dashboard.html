@@ -109,6 +109,23 @@
       <p id="notification-settings-status" role="status" class="text-xs text-slate-400"></p>
     </section>
 
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
+      <div>
+        <h2 class="text-lg font-bold">Test email delivery</h2>
+        <p class="text-xs text-slate-400 mt-1">Send a test or feedback message to your verified account email to check SMTP delivery.</p>
+      </div>
+      <form id="email-test-form" class="space-y-3">
+        <label class="block text-sm">Subject
+          <input id="email-test-subject" type="text" maxlength="120" required value="Email delivery test" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+        </label>
+        <label class="block text-sm">Test message or feedback
+          <textarea id="email-test-message" maxlength="2000" required rows="3" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm" placeholder="Enter a message to include in the test email."></textarea>
+        </label>
+        <button id="email-test-submit" type="submit" class="text-sm font-semibold bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2 rounded-xl transition">Send test email</button>
+      </form>
+      <p id="email-test-status" role="status" aria-live="polite" class="text-xs text-slate-400"></p>
+    </section>
+
     <!-- ==================== GENERATION HISTORY ==================== -->
     <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
       <div class="flex items-center justify-between gap-3">
@@ -168,6 +185,7 @@
   const RAILWAY_ME_GENERATIONS_URL = `${BACKEND_BASE_URL}/me/generations`;
   const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/me/credits/topup`;
   const RAILWAY_NOTIFICATION_SETTINGS_URL = `${BACKEND_BASE_URL}/me/notification-settings`;
+  const RAILWAY_EMAIL_TEST_URL = `${BACKEND_BASE_URL}/me/email-test`;
   const REGENERATE_STORAGE_KEY = 'wiroRegeneratePreset';
 
   const AUTH_TOKEN_STORAGE_KEY = 'wiroAuthToken';
@@ -336,6 +354,38 @@
   document.getElementById('add-credits-btn').addEventListener('click', openCreditsModal);
   document.getElementById('refresh-generations-btn').addEventListener('click', refreshGenerationHistory);
   document.getElementById('credits-modal-close').addEventListener('click', closeCreditsModal);
+  document.getElementById('email-test-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = document.getElementById('email-test-submit');
+    const status = document.getElementById('email-test-status');
+    button.disabled = true;
+    status.className = 'text-xs text-slate-400';
+    status.textContent = 'Sending test email…';
+    try {
+      const res = await authFetch(RAILWAY_EMAIL_TEST_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subject: document.getElementById('email-test-subject').value,
+          message: document.getElementById('email-test-message').value
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        const diagnostic = data.diagnostics
+          ? ` (${data.diagnostics.code}) ${data.diagnostics.message}`
+          : '';
+        throw new Error(`${data.error || 'Email test failed.'}${diagnostic}`);
+      }
+      status.textContent = data.message;
+      status.classList.add('text-emerald-300');
+    } catch (error) {
+      status.textContent = error.message || 'Could not send the test email.';
+      status.classList.add('text-red-400');
+    } finally {
+      button.disabled = false;
+    }
+  });
   document.getElementById('logout-btn').addEventListener('click', () => {
     clearAuthToken();
     window.location.href = 'index.html';

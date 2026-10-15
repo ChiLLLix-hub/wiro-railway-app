@@ -7,7 +7,7 @@ import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
 import { hashPassword, verifyPassword, issueToken, requireAuth, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt, markUserLoggedIn } from './auth.js';
-import { frontendBaseUrl, processNotificationOutbox, queueMail, queueOptInNotifications } from './notifications.js';
+import { frontendBaseUrl, processNotificationOutbox, queueMail, queueOptInNotifications, sendTestEmail } from './notifications.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -46,6 +46,14 @@ const apiRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'Too many requests. Please slow down.' }
+});
+
+const emailTestRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many email tests. Please try again later.' }
 });
 
 // Health check endpoint
@@ -1436,6 +1444,50 @@ app.get('/me/notification-settings', apiRateLimiter, requireAuth, async (req, re
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Could not load notification settings.' });
+  }
+});
+
+app.post('/me/email-test', emailTestRateLimiter, requireAuth, async (req, res) => {
+  const subject = String(req.body?.subject || '').trim();
+  const message = String(req.body?.message || '').trim();
+  if (!subject || subject.length > 120) {
+    return res.status(400).json({ success: false, error: 'Enter a subject of 1–120 characters.' });
+  }
+  if (!message || message.length > 2000) {
+    return res.status(400).json({ success: false, error: 'Enter a message of 1–2,000 characters.' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT email, email_verified FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const user = rows[0];
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (!user.email_verified) {
+      return res.status(400).json({ success: false, error: 'Verify your account email before testing delivery.' });
+    }
+
+    await sendTestEmail({ to: user.email, subject, message });
+    return res.json({ success: true, message: `Test email sent to ${user.email}. Check your inbox and spam folder.` });
+  } catch (error) {
+    const code = String(error.code || 'SMTP_DELIVERY_FAILED').slice(0, 40);
+    const diagnostics = {
+      code,
+      message: code === 'ETIMEDOUT' || code === 'ESOCKET'
+        ? 'The SMTP connection timed out. Confirm the SMTP host and port, implicit TLS on port 465, and that the mail host allows connections from Railway.'
+        : code === 'EAUTH'
+          ? 'The mail server rejected authentication. Check the SMTP username and mailbox password.'
+          : code === 'EMAIL_NOT_CONFIGURED'
+            ? error.message
+            : 'The SMTP server could not deliver the test email. Check the server logs and SMTP provider settings.'
+    };
+    console.error('SMTP email test failed:', { code, message: error.message });
+    return res.status(502).json({
+      success: false,
+      error: 'Email test failed.',
+      diagnostics
+    });
   }
 });
 
