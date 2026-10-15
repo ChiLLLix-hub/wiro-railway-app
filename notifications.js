@@ -15,10 +15,30 @@ const mailTransport = smtpHost && process.env.SMTP_USER && process.env.SMTP_PASS
     })
   : null;
 
+async function sendViaResend({ to, subject, text }) {
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ from: process.env.EMAIL_FROM, to: [to], subject, text }),
+    signal: AbortSignal.timeout(20_000)
+  });
+  if (!response.ok) {
+    const code = response.status === 401 || response.status === 403 ? 'RESEND_AUTH' : 'RESEND_REJECTED';
+    throw Object.assign(new Error(`Resend delivery failed (${response.status}).`), { code });
+  }
+  return response.json().catch(() => ({}));
+}
+
 async function sendEmail({ to, subject, text }) {
+  if (process.env.RESEND_API_KEY && process.env.EMAIL_FROM) {
+    return sendViaResend({ to, subject, text });
+  }
   if (!mailTransport || !process.env.EMAIL_FROM) {
     throw Object.assign(
-      new Error('SMTP delivery is not configured. Check SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and EMAIL_FROM.'),
+      new Error('Email delivery is not configured. Set RESEND_API_KEY and EMAIL_FROM (or SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and EMAIL_FROM).'),
       { code: 'EMAIL_NOT_CONFIGURED' }
     );
   }

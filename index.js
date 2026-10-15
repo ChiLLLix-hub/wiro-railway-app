@@ -1482,6 +1482,10 @@ app.post('/me/email-test', emailTestRateLimiter, requireAuth, async (req, res) =
       code,
       message: code === 'EMAIL_NOT_CONFIGURED'
         ? error.message
+        : code === 'RESEND_AUTH'
+          ? 'Resend rejected the API key. Check RESEND_API_KEY on this service.'
+          : code === 'RESEND_REJECTED'
+            ? 'Resend rejected the message. Verify your sending domain in Resend and that EMAIL_FROM uses it.'
         : ['ETIMEDOUT', 'ESOCKET', 'ECONNECTION', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EHOSTUNREACH'].includes(code)
           ? 'The SMTP connection failed. Confirm the SMTP host and port, implicit TLS on port 465, and that the mail host allows connections from Railway.'
           : code === 'EAUTH'
