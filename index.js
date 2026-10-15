@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
@@ -73,13 +73,14 @@ const upload = multer({
 // CURRENCY_SYMBOL to change the displayed label (defaults to "RM").
 const CURRENCY_EXCHANGE_RATE = Number(process.env.CURRENCY_EXCHANGE);
 const CURRENCY_SYMBOL = process.env.CURRENCY_SYMBOL || 'RM';
+const TOKEN_HASH_SECRET = process.env.TOKEN_HASH_SECRET || process.env.JWT_SECRET || randomBytes(32).toString('hex');
 
 function createOpaqueToken() {
   return randomBytes(32).toString('hex');
 }
 
 function hashOpaqueToken(token) {
-  return createHash('sha256').update(String(token)).digest('hex');
+  return createHmac('sha256', TOKEN_HASH_SECRET).update(String(token)).digest('hex');
 }
 
 async function createAccountToken(userId, purpose, lifetimeHours) {
@@ -1514,7 +1515,7 @@ app.delete('/me/integrations/:provider', apiRateLimiter, requireAuth, async (req
   }
 });
 
-app.get('/integrations/discord/callback', async (req, res) => {
+app.get('/integrations/discord/callback', apiRateLimiter, async (req, res) => {
   const state = String(req.query.state || '');
   const code = String(req.query.code || '');
   const failUrl = `${frontendBaseUrl()}/dashboard.html?discord=error`;
@@ -1556,7 +1557,7 @@ app.get('/integrations/discord/callback', async (req, res) => {
   }
 });
 
-app.post('/integrations/telegram/webhook', async (req, res) => {
+app.post('/integrations/telegram/webhook', apiRateLimiter, async (req, res) => {
   const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
   const receivedSecret = req.get('x-telegram-bot-api-secret-token');
   if (!expectedSecret || receivedSecret !== expectedSecret) return res.sendStatus(401);

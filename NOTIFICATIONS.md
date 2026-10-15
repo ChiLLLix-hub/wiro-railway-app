@@ -12,6 +12,7 @@ Use the SMTP credentials for a mailbox you own, including one provided by your w
 - `SMTP_PASSWORD`
 - `EMAIL_FROM` (for example, `Mygenx Studio <no-reply@example.com>`)
 - `FRONTEND_BASE_URL` (the public cPanel site origin, without a trailing slash)
+- `TOKEN_HASH_SECRET` (a long random secret used to hash verification, reset, and linking tokens; keep it stable across Railway restarts)
 
 Configure the sending domain's SPF and DKIM records with the mail host, and add DMARC. Confirm that the host allows SMTP connections from Railway. Verification links expire after 24 hours; password-reset links expire after one hour.
 
