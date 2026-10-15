@@ -1457,17 +1457,23 @@ app.post('/me/email-test', emailTestRateLimiter, requireAuth, async (req, res) =
     return res.status(400).json({ success: false, error: 'Enter a message of 1–2,000 characters.' });
   }
 
+  let user;
   try {
     const { rows } = await pool.query(
       'SELECT email, email_verified FROM users WHERE id = $1',
       [req.user.id]
     );
-    const user = rows[0];
-    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
-    if (!user.email_verified) {
-      return res.status(400).json({ success: false, error: 'Verify your account email before testing delivery.' });
-    }
+    user = rows[0];
+  } catch (error) {
+    console.error('Could not load account email for SMTP test:', error.message);
+    return res.status(500).json({ success: false, error: 'Could not check the account email.' });
+  }
+  if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+  if (!user.email_verified) {
+    return res.status(400).json({ success: false, error: 'Verify your account email before testing delivery.' });
+  }
 
+  try {
     await sendTestEmail({ to: user.email, subject, message });
     return res.json({ success: true, message: `Test email sent to ${user.email}. Check your inbox and spam folder.` });
   } catch (error) {
@@ -1482,7 +1488,7 @@ app.post('/me/email-test', emailTestRateLimiter, requireAuth, async (req, res) =
             ? error.message
             : 'The SMTP server could not deliver the test email. Check the server logs and SMTP provider settings.'
     };
-    console.error('SMTP email test failed:', { code, message: error.message });
+    console.error('SMTP email test failed:', { code });
     return res.status(502).json({
       success: false,
       error: 'Email test failed.',

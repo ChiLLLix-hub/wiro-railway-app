@@ -44,4 +44,4 @@ The OAuth flow links the user's Discord account ID. The bot sends individual dir
 
 The database outbox retries failed deliveries with increasing delays and uses unique event/channel keys to avoid duplicate sends. The Railway process checks pending generations in the background, so generation notifications do not depend on the browser remaining open. Demo top-ups remain test credits, not proof of a payment.
 
-After configuring each integration, verify its connection with a user account and enable the desired event/channel toggles in the dashboard. Missing provider configuration leaves deliveries queued for retry and is reported in server logs.
+After configuring email, sign in with a verified account, then use **Dashboard → Test email delivery** to send a message to that account's email address. The form reports safe SMTP diagnostics, including timeout guidance. It is limited to three tests per 15 minutes per IP. After configuring each other integration, verify its connection with a user account and enable the desired event/channel toggles in the dashboard. Provider failures leave queued messages for retry and are recorded in server logs.
