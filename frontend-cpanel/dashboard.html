@@ -147,10 +147,12 @@
     </div>
   </div>
 
+  <script src="session.js"></script>
   <script>
   const DEFAULT_BACKEND_BASE_URL = 'https://wiro-railway-app-production.up.railway.app';
   const CUSTOM_BACKEND_BASE_URL = String(window.WIRO_API_BASE_URL || window.__WIRO_API_BASE_URL || '').replace(/\/+$/, '');
   const BACKEND_BASE_URL = CUSTOM_BACKEND_BASE_URL || DEFAULT_BACKEND_BASE_URL;
+  const sessionController = window.WiroSession.create({ baseUrl: BACKEND_BASE_URL });
   const RAILWAY_ME_URL = `${BACKEND_BASE_URL}/me`;
   const RAILWAY_ME_SUMMARY_URL = `${BACKEND_BASE_URL}/me/summary`;
   const RAILWAY_ME_GENERATIONS_URL = `${BACKEND_BASE_URL}/me/generations`;
@@ -158,27 +160,11 @@
   const RAILWAY_NOTIFICATION_SETTINGS_URL = `${BACKEND_BASE_URL}/me/notification-settings`;
   const REGENERATE_STORAGE_KEY = 'wiroRegeneratePreset';
 
-  const AUTH_TOKEN_STORAGE_KEY = 'wiroAuthToken';
-
   function getAuthToken() {
-    try { return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || ''; } catch { return ''; }
-  }
-  function clearAuthToken() {
-    try { window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY); } catch { /* ignore */ }
-  }
-  function withAuthHeaders(init = {}) {
-    const token = getAuthToken();
-    const headers = new Headers(init.headers || {});
-    if (token) headers.set('Authorization', 'Bear' + 'er ' + token);
-    return { ...init, headers };
+    return sessionController.getToken();
   }
   async function authFetch(url, init = {}) {
-    const res = await fetch(url, withAuthHeaders(init));
-    if (res.status === 401) {
-      clearAuthToken();
-      window.location.href = 'index.html';
-    }
-    return res;
+    return sessionController.fetch(url, init);
   }
 
   async function authJson(url, init = {}) {
@@ -319,9 +305,8 @@
   document.getElementById('add-credits-btn').addEventListener('click', openCreditsModal);
   document.getElementById('refresh-generations-btn').addEventListener('click', refreshGenerationHistory);
   document.getElementById('credits-modal-close').addEventListener('click', closeCreditsModal);
-  document.getElementById('logout-btn').addEventListener('click', () => {
-    clearAuthToken();
-    window.location.href = 'index.html';
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    if (await sessionController.logout()) window.location.href = 'index.html';
   });
 
   document.querySelectorAll('.notification-pref').forEach(checkbox => {

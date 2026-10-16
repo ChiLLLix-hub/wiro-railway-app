@@ -258,10 +258,12 @@
     </div>
   </div>
 
+  <script src="session.js"></script>
   <script>
   const DEFAULT_BACKEND_BASE_URL = 'https://wiro-railway-app-production.up.railway.app';
   const CUSTOM_BACKEND_BASE_URL = String(window.WIRO_API_BASE_URL || window.__WIRO_API_BASE_URL || '').replace(/\/+$/, '');
   const BACKEND_BASE_URL = CUSTOM_BACKEND_BASE_URL || DEFAULT_BACKEND_BASE_URL;
+  const sessionController = window.WiroSession.create({ baseUrl: BACKEND_BASE_URL });
   const RAILWAY_ME_URL = `${BACKEND_BASE_URL}/me`;
   const RAILWAY_ADMIN_USERS_URL = `${BACKEND_BASE_URL}/admin/users`;
   const RAILWAY_ADMIN_GENERATIONS_URL = `${BACKEND_BASE_URL}/admin/generations`;
@@ -270,27 +272,11 @@
   const RAILWAY_ADMIN_LOGIN_ATTEMPTS_URL = `${BACKEND_BASE_URL}/admin/login-attempts`;
   const RAILWAY_TASK_URL = `${BACKEND_BASE_URL}/task`;
 
-  const AUTH_TOKEN_STORAGE_KEY = 'wiroAuthToken';
-
   function getAuthToken() {
-    try { return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || ''; } catch { return ''; }
-  }
-  function clearAuthToken() {
-    try { window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY); } catch { /* ignore */ }
-  }
-  function withAuthHeaders(init = {}) {
-    const token = getAuthToken();
-    const headers = new Headers(init.headers || {});
-    if (token) headers.set('Authorization', 'Bear' + 'er ' + token);
-    return { ...init, headers };
+    return sessionController.getToken();
   }
   async function authFetch(url, init = {}) {
-    const res = await fetch(url, withAuthHeaders(init));
-    if (res.status === 401) {
-      clearAuthToken();
-      window.location.href = 'index.html';
-    }
-    return res;
+    return sessionController.fetch(url, init);
   }
 
   function formatDate(value) {
@@ -421,25 +407,25 @@
       btn.addEventListener('click', () => openCreditModal(btn.dataset.id, btn.dataset.email));
     });
     document.querySelectorAll('.block-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => runAdminAction(async () => {
         await postJson(`${RAILWAY_ADMIN_USERS_URL}/${btn.dataset.id}/block`);
         await loadUsers(document.getElementById('users-search').value.trim());
-      });
+      }));
     });
     document.querySelectorAll('.unblock-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => runAdminAction(async () => {
         await postJson(`${RAILWAY_ADMIN_USERS_URL}/${btn.dataset.id}/unblock`);
         await loadUsers(document.getElementById('users-search').value.trim());
-      });
+      }));
     });
     document.querySelectorAll('.blacklist-btn').forEach(btn => {
       btn.addEventListener('click', () => openBlacklistModal(btn.dataset.id, btn.dataset.email));
     });
     document.querySelectorAll('.unblacklist-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => runAdminAction(async () => {
         await postJson(`${RAILWAY_ADMIN_USERS_URL}/${btn.dataset.id}/unblacklist`);
         await loadUsers(document.getElementById('users-search').value.trim());
-      });
+      }));
     });
   }
 
@@ -778,25 +764,29 @@
     }
   });
 
+  async function runAdminAction(action) {
+    try { await action(); }
+    catch (error) { console.error('Admin request failed:', error.message); }
+  }
+
   let usersSearchTimer = null;
   document.getElementById('users-search').addEventListener('input', (e) => {
     clearTimeout(usersSearchTimer);
-    usersSearchTimer = setTimeout(() => loadUsers(e.target.value.trim()), 300);
+    usersSearchTimer = setTimeout(() => runAdminAction(() => loadUsers(e.target.value.trim())), 300);
   });
 
   let generationsSearchTimer = null;
   document.getElementById('generations-search').addEventListener('input', (e) => {
     clearTimeout(generationsSearchTimer);
-    generationsSearchTimer = setTimeout(() => loadGenerations(e.target.value.trim()), 300);
+    generationsSearchTimer = setTimeout(() => runAdminAction(() => loadGenerations(e.target.value.trim())), 300);
   });
 
   document.getElementById('failed-only-checkbox').addEventListener('change', (e) => {
-    loadLoginAttempts(e.target.checked);
+    runAdminAction(() => loadLoginAttempts(e.target.checked));
   });
 
-  document.getElementById('logout-btn').addEventListener('click', () => {
-    clearAuthToken();
-    window.location.href = 'index.html';
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    if (await sessionController.logout()) window.location.href = 'index.html';
   });
 
   (async function init() {

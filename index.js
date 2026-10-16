@@ -6,7 +6,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
-import { hashPassword, verifyPassword, issueToken, requireAuth, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt, markUserLoggedIn } from './auth.js';
+import { hashPassword, verifyPassword, issueToken, requireAuth, requireSession, claimSessionTab, logoutSession, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt } from './auth.js';
 import { frontendBaseUrl, processNotificationOutbox, queueMail, queueOptInNotifications } from './notifications.js';
 
 const app = express();
@@ -22,7 +22,7 @@ app.disable('etag');
 app.use(cors({
   origin: ['https://agromar.com.my', 'http://localhost:3000'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Tab-Id']
 }));
 
 app.use(express.json());
@@ -1298,9 +1298,7 @@ app.post('/auth/login', authRateLimiter, async (req, res) => {
     }
 
     await recordLoginAttempt({ email: normalizedEmail, success: true, ip, userAgent });
-    await markUserLoggedIn(user.id);
-
-    const token = issueToken(user);
+    const token = await issueToken(user);
     return res.json({
       success: true,
       token,
@@ -1341,6 +1339,10 @@ app.post('/auth/forgot-password', authRateLimiter, async (req, res) => {
   }
 });
 
+app.post('/auth/session/claim', apiRateLimiter, requireSession, claimSessionTab);
+app.post('/auth/session/heartbeat', apiRateLimiter, requireSession, claimSessionTab);
+app.post('/auth/logout', apiRateLimiter, requireSession, logoutSession);
+
 app.post('/auth/reset-password', authRateLimiter, async (req, res) => {
   if (!isDbConfigured()) return res.status(503).json({ success: false, error: 'Accounts are not configured on this server.' });
   const token = String(req.body?.token || '');
@@ -1350,7 +1352,7 @@ app.post('/auth/reset-password', authRateLimiter, async (req, res) => {
     const reset = await consumeAccountToken(token, 'password_reset');
     if (!reset) return res.status(400).json({ success: false, error: 'This password-reset link is invalid or expired.' });
     const passwordHash = await hashPassword(password);
-    await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [passwordHash, reset.user_id]);
+    await pool.query('UPDATE users SET password_hash = $1, active_session_id = NULL, session_tab_id = NULL, session_tab_expires_at = NULL, updated_at = now() WHERE id = $2', [passwordHash, reset.user_id]);
     return res.json({ success: true, message: 'Password updated. You can now log in.' });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Could not reset password.' });
@@ -1623,13 +1625,13 @@ app.post('/admin/users/:id/credits', apiRateLimiter, requireAuth, requireAdmin, 
 });
 
 // Admin-only: block/unblock toggles `is_active` - a blocked user keeps
-// their account and data but can no longer log in (enforced in
-// POST /auth/login). Distinct from blacklisting below, which is a
+// their account and data but loses their session and can no longer log in.
+// Distinct from blacklisting below, which is a
 // stronger, reason-tracked, email-level denial.
 app.post('/admin/users/:id/block', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `UPDATE users SET is_active = FALSE, updated_at = now() WHERE id = $1 RETURNING id, email, is_active`,
+      `UPDATE users SET is_active = FALSE, active_session_id = NULL, session_tab_id = NULL, session_tab_expires_at = NULL, updated_at = now() WHERE id = $1 RETURNING id, email, is_active`,
       [req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
@@ -1662,7 +1664,7 @@ app.post('/admin/users/:id/blacklist', apiRateLimiter, requireAuth, requireAdmin
       return res.status(400).json({ success: false, error: 'A reason is required to blacklist a user.' });
     }
     const { rows } = await pool.query(
-      `UPDATE users SET blacklisted = TRUE, blacklist_reason = $1, updated_at = now() WHERE id = $2 RETURNING id, email, blacklisted, blacklist_reason`,
+      `UPDATE users SET blacklisted = TRUE, blacklist_reason = $1, active_session_id = NULL, session_tab_id = NULL, session_tab_expires_at = NULL, updated_at = now() WHERE id = $2 RETURNING id, email, blacklisted, blacklist_reason`,
       [reason, req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found.' });
