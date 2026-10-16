@@ -55,6 +55,9 @@ export async function initSchema() {
   // ("blacklist", distinct from `is_active` which an admin can freely
   // toggle back on - blacklisting records why, for audit purposes).
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS active_session_id TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_tab_id TEXT;`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_tab_expires_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blacklisted BOOLEAN NOT NULL DEFAULT FALSE;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blacklist_reason TEXT;`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE;`);

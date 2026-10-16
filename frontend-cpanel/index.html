@@ -407,12 +407,14 @@
     </div>
   </footer>
 
+  <script src="session.js"></script>
   <script>
   const DEFAULT_BACKEND_BASE_URL = 'https://wiro-railway-app-production.up.railway.app';
   const CUSTOM_BACKEND_BASE_URL = String(window.WIRO_API_BASE_URL || window.__WIRO_API_BASE_URL || '').replace(/\/+$/, '');
   const CUSTOM_CREDENTIALS_MODE = String(window.WIRO_API_CREDENTIALS_MODE || '').toLowerCase();
   const ALLOWED_CREDENTIAL_MODES = ['omit', 'same-origin', 'include'];
   const BACKEND_BASE_URL = CUSTOM_BACKEND_BASE_URL || DEFAULT_BACKEND_BASE_URL;
+  const sessionController = window.WiroSession.create({ baseUrl: BACKEND_BASE_URL });
   const RAILWAY_BACKEND_URL = `${BACKEND_BASE_URL}/generate`;
   const RAILWAY_MODELS_URL = `${BACKEND_BASE_URL}/models`;
   const RAILWAY_SCHEMA_URL = `${BACKEND_BASE_URL}/models/schema`;
@@ -433,46 +435,16 @@
   // enforced server-side against the authenticated user). The JWT issued
   // by /auth/login|register is kept in localStorage and attached as a
   // bearer-token Authorization header to every authenticated backend call below.
-  const AUTH_TOKEN_STORAGE_KEY = 'wiroAuthToken';
-
   function getAuthToken() {
-    try {
-      return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || '';
-    } catch {
-      return '';
-    }
-
+    return sessionController.getToken();
   }
 
   function setAuthToken(token) {
-    try {
-      if (token) window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
-      else window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-    } catch { /* localStorage unavailable (privacy mode, etc.) - fail silently */ }
-  }
-
-  function clearAuthToken() {
-    setAuthToken('');
-  }
-
-  // Merges an Authorization: bearer-token header into a fetch init object without
-  // clobbering any headers already set by the caller.
-  function withAuthHeaders(init = {}) {
-    const token = getAuthToken();
-    const headers = new Headers(init.headers || {});
-    if (token) headers.set('Authorization', 'Bear' + 'er ' + token);
-    return { ...init, headers };
+    sessionController.setToken(token);
   }
 
   async function authFetch(url, init = {}) {
-    const res = await fetch(url, withAuthHeaders(init));
-    if (res.status === 401) {
-      // Token missing/expired - drop it and surface a clear prompt instead
-      // of a confusing generic failure.
-      clearAuthToken();
-      updateAuthUI();
-    }
-    return res;
+    return sessionController.fetch(url, init);
   }
 
   function showToast(message, type = 'success', action = null) {
@@ -526,8 +498,8 @@
     return data.user;
   }
 
-  function logoutAccount() {
-    clearAuthToken();
+  async function logoutAccount() {
+    await sessionController.logout();
     updateAuthUI(null);
   }
 
