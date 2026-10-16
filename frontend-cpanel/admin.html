@@ -786,8 +786,7 @@
   });
 
   document.getElementById('logout-btn').addEventListener('click', async () => {
-    await sessionController.logout();
-    window.location.href = 'index.html';
+    if (await sessionController.logout()) window.location.href = 'index.html';
   });
 
   (async function init() {

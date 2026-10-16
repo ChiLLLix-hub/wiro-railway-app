@@ -499,8 +499,7 @@
   }
 
   async function logoutAccount() {
-    await sessionController.logout();
-    updateAuthUI(null);
+    if (await sessionController.logout()) updateAuthUI(null);
   }
 
   // Tracks the signed-in user's current credit balance so the Generate

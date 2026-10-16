@@ -205,12 +205,117 @@ test('session replacement and ordinary expiry display appropriate messages', asy
 
 test('logout sends token and tab headers without first claiming a lease', async () => {
   const app = harness();
-  await app.controller.logout();
+  assert.equal(await app.controller.logout(), true);
   assert.equal(app.calls.length, 1);
   assert.equal(app.calls[0].url, 'https://api.example/auth/logout');
   assert.equal(app.calls[0].init.headers.get('Authorization'), ['Bearer', 'token-a'].join(' '));
   assert.equal(app.calls[0].init.headers.get('X-Tab-Id'), 'tab-a');
   assert.equal(app.window.localStorage.getItem('wiroAuthToken'), null);
+});
+
+test('logout waits for server confirmation and serializes repeated clicks', async () => {
+  const started = deferred();
+  const finish = deferred();
+  const app = harness({ fetch: async () => { started.resolve(); return finish.promise; } });
+  const first = app.controller.logout();
+  const second = app.controller.logout();
+  await started.promise;
+  assert.equal(app.calls.length, 1);
+  assert.equal(app.window.localStorage.getItem('wiroAuthToken'), 'token-a');
+  assert.equal(app.controller.getToken(), 'token-a');
+  finish.resolve(response());
+  assert.equal(await first, true);
+  assert.equal(await second, true);
+  assert.equal(app.window.localStorage.getItem('wiroAuthToken'), null);
+});
+
+test('logout 503 retains session and offers explicit revoke retry without claiming', async () => {
+  let attempts = 0;
+  const app = harness({ fetch: async () => ++attempts === 1 ? response(503) : response() });
+  assert.equal(await app.controller.logout(), false);
+  assert.equal(app.window.localStorage.getItem('wiroAuthToken'), 'token-a');
+  assert.equal(app.controller.getToken(), 'token-a');
+  assert.equal(app.panel()[0].textContent, 'Unable to log out');
+  assert.match(app.panel()[1].textContent, /still signed in/);
+  assert.equal(app.panel()[2].textContent, 'Retry logout');
+  assert.equal((await app.controller.fetch('/me')).status, 503);
+  assert.equal(app.calls.length, 1);
+  await app.panel()[2].onclick();
+  assert.equal(app.window.location.href, 'index.html');
+  assert.equal(app.window.localStorage.getItem('wiroAuthToken'), null);
+  assert.equal(app.calls.length, 2);
+  assert.ok(app.calls.every(call => call.url.endsWith('/auth/logout')));
+});
+
+test('offline logout does not falsely claim that server sign-out succeeded', async () => {
+  const app = harness({ fetch: async () => { throw new Error('offline'); } });
+  assert.equal(await app.controller.logout(), false);
+  assert.equal(app.window.localStorage.getItem('wiroAuthToken'), 'token-a');
+  assert.equal(app.panel()[0].textContent, 'Unable to log out');
+  assert.equal(app.window.location.href, '');
+});
+
+test('logout response cannot clear a newer token written while revoke was pending', async () => {
+  const started = deferred();
+  const finish = deferred();
+  const app = harness({ fetch: async () => { started.resolve(); return finish.promise; } });
+  const pending = app.controller.logout();
+  await started.promise;
+  app.window.localStorage.setItem('wiroAuthToken', 'new-account');
+  finish.resolve(response());
+  assert.equal(await pending, false);
+  assert.equal(app.window.localStorage.getItem('wiroAuthToken'), 'new-account');
+  assert.equal(app.panel()[0].textContent, 'Signed in elsewhere');
+});
+
+test('logout can complete locally if the server confirms the session is already invalid', async () => {
+  const app = harness({ fetch: async () => response(401, { code: 'SESSION_REPLACED' }) });
+  assert.equal(await app.controller.logout(), true);
+  assert.equal(app.window.localStorage.getItem('wiroAuthToken'), null);
+});
+
+test('outgoing navigation lock is retried briefly before assigning a different tab identity', async () => {
+  const locks = new Set(['wiro-tab:tab-a']);
+  const app = harness({ locks });
+  setTimeout(() => locks.delete('wiro-tab:tab-a'), 20);
+  assert.equal((await app.controller.fetch('/me')).status, 200);
+  assert.equal(app.calls[0].init.headers.get('X-Tab-Id'), 'tab-a');
+  assert.equal(app.window.sessionStorage.getItem('wiroTabId'), 'tab-a');
+});
+
+test('blocked requests and stale timers never reclaim; takeover ignores stale pending 409 and 401', async () => {
+  const pending409 = deferred();
+  const pending401 = deferred();
+  const started409 = deferred();
+  const started401 = deferred();
+  const app = harness({ fetch: async url => {
+    if (url === '/slow409') { started409.resolve(); return pending409.promise; }
+    if (url === '/slow401') { started401.resolve(); return pending401.promise; }
+    if (url.endsWith('/heartbeat')) return response(409, { code: 'TAB_CONFLICT' });
+    return response();
+  } });
+  await app.controller.fetch('/me');
+  const stale409 = app.controller.fetch('/slow409');
+  const stale401 = app.controller.fetch('/slow401');
+  await Promise.all([started409.promise, started401.promise]);
+  const oldHeartbeat = app.timers.get(1);
+  await oldHeartbeat();
+  const callsWhenBlocked = app.calls.length;
+  await oldHeartbeat();
+  assert.equal((await app.controller.fetch('/generate', { method: 'POST' })).status, 409);
+  assert.equal((await app.controller.fetch('/me')).status, 409);
+  assert.equal(app.calls.length, callsWhenBlocked);
+  await app.panel()[2].onclick();
+  assert.equal(app.reloads(), 1);
+  pending409.resolve(response(409, { code: 'TAB_CONFLICT' }));
+  pending401.resolve(response(401, { code: 'SESSION_REPLACED' }));
+  await Promise.all([stale409, stale401]);
+  assert.equal(app.controller.getToken(), 'token-a');
+  assert.equal(app.window.localStorage.getItem('wiroAuthToken'), 'token-a');
+  assert.equal((await app.controller.fetch('/me')).status, 200);
+  const claims = app.calls.filter(call => call.url.endsWith('/claim'));
+  assert.equal(claims.length, 2);
+  assert.equal(claims.filter(call => JSON.parse(call.init.body).takeover).length, 1);
 });
 
 test('duplicate tabs get different IDs; navigation reuses ID without releasing server lease', async () => {

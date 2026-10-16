@@ -21,6 +21,7 @@
     // A duplicated tab inherits sessionStorage, but cannot inherit a live lock.
     if (window.navigator.locks) {
       try {
+        let waitingForNavigation = true;
         while (true) {
           const acquired = await new Promise((resolve, reject) => {
             window.navigator.locks.request(`wiro-tab:${id}`, { ifAvailable: true }, lock => {
@@ -31,6 +32,12 @@
           if (acquired) {
             save();
             return id;
+          }
+          if (waitingForNavigation) {
+            waitingForNavigation = false;
+            // Let an outgoing document finish releasing its browser lock.
+            await new Promise(resolve => window.setTimeout(resolve, 180));
+            continue;
           }
           id = randomId();
         }
@@ -75,6 +82,7 @@
       let version = 0;
       let tabId = '';
       let claimPromise = null;
+      let logoutPromise = null;
       let heartbeatTimer = null;
       let heartbeatPending = false;
       let renewedAt = 0;
@@ -112,17 +120,25 @@
         const [title, message, button] = overlay.firstChild.children;
         const conflict = state === 'blocked';
         const unavailable = state === 'unavailable';
+        const logoutFailed = state === 'logout-error';
         title.textContent = conflict ? 'Already open in another tab'
+          : logoutFailed ? 'Unable to log out'
           : state === 'replaced' ? 'Signed in elsewhere' : unavailable ? 'Unable to connect' : 'Session expired';
         message.textContent = conflict
           ? 'This account is active in another tab. Use this tab instead to move the session here.'
+          : logoutFailed ? 'The server could not confirm sign-out. You are still signed in. Reconnect and retry to revoke this session.'
           : state === 'replaced' ? 'Your session was replaced or another account signed in. This tab will not switch accounts automatically.'
           : unavailable ? 'The session could not be checked. Please retry when your connection is available.'
           : 'Your session is no longer valid. Please sign in again.';
-        button.textContent = conflict ? 'Use this tab instead' : unavailable ? 'Retry'
+        button.textContent = logoutFailed ? 'Retry logout' : conflict ? 'Use this tab instead' : unavailable ? 'Retry'
           : state === 'replaced' ? 'Reload to continue' : 'Sign in';
         button.disabled = false;
         button.onclick = async () => {
+          if (state === 'logout-error') {
+            button.disabled = true;
+            if (await logout()) window.location.href = 'index.html';
+            return;
+          }
           if (state !== 'blocked' && state !== 'unavailable') {
             window.location.href = 'index.html';
             return;
@@ -242,7 +258,7 @@
           success: false,
           code: conflict ? 'TAB_CONFLICT' : state === 'replaced' ? 'SESSION_REPLACED' : 'SESSION_UNAVAILABLE',
           error: conflict ? 'Already open in another tab.' : 'Session unavailable. Please check the session message.'
-        }), { status: conflict ? 409 : state === 'unavailable' ? 503 : 401,
+        }), { status: conflict ? 409 : ['unavailable', 'logout-error', 'logout-pending'].includes(state) ? 503 : 401,
           headers: { 'Content-Type': 'application/json' } });
       }
 
@@ -253,13 +269,47 @@
         }
       });
 
+      function logout() {
+        if (logoutPromise) return logoutPromise;
+        if (!token) return Promise.resolve(true);
+        const expected = token;
+        const revision = ++version;
+        state = 'logout-pending';
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+        const pending = (async () => {
+          try {
+            await identity;
+            if (!stillCurrent(expected, revision)) return false;
+            if (!tabId) throw new Error('Tab identity unavailable.');
+            const response = await window.fetch(`${base}/auth/logout`, {
+              method: 'POST', headers: headersFor(expected)
+            });
+            if (!stillCurrent(expected, revision)) return false;
+            // A 401 confirms that this session is already invalid.
+            if (!response.ok && response.status !== 401) throw new Error('Sign-out not confirmed.');
+            clearStoredToken(expected);
+            token = '';
+            state = 'signedout';
+            return true;
+          } catch {
+            if (stillCurrent(expected, revision)) stop('logout-error');
+            return false;
+          }
+        })();
+        logoutPromise = pending;
+        pending.then(() => { if (logoutPromise === pending) logoutPromise = null; });
+        return pending;
+      }
+
       return {
-        getToken: () => ['idle', 'active', 'blocked', 'unavailable'].includes(state) ? token : '',
+        getToken: () => ['idle', 'active', 'blocked', 'unavailable', 'logout-pending', 'logout-error'].includes(state) ? token : '',
         setToken(nextToken) {
           version++;
           window.clearInterval(heartbeatTimer);
           heartbeatTimer = null;
           claimPromise = null;
+          logoutPromise = null;
           token = String(nextToken || '');
           state = token ? 'idle' : 'signedout';
           try {
@@ -279,21 +329,7 @@
           if (!await handleResponse(response, expected, revision)) return failure();
           return response;
         },
-        async logout() {
-          const expected = token;
-          version++;
-          state = 'signedout';
-          window.clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-          clearStoredToken(expected);
-          token = '';
-          try {
-            await identity;
-            if (expected && tabId) await window.fetch(`${base}/auth/logout`, {
-              method: 'POST', headers: headersFor(expected)
-            });
-          } catch { /* Local sign-out still succeeds when offline. */ }
-        }
+        logout
       };
     }
   };
