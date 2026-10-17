@@ -134,15 +134,14 @@
       <p class="text-slate-400 text-xs">Secure payment via CHIP - you will be redirected to complete payment.</p>
       <div id="credits-modal-error" class="hidden text-xs text-red-400"></div>
       <div class="space-y-2">
-        <button data-package="starter" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">
-          <span class="font-semibold">Starter</span> - 10 credits
-        </button>
-        <button data-package="pro" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">
-          <span class="font-semibold">Pro</span> - 50 credits
-        </button>
-        <button data-package="studio" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">
-          <span class="font-semibold">Studio</span> - 100 credits
-        </button>
+        <button type="button" data-amount="10" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">RM 10 - 10 credits</button>
+        <button type="button" data-amount="20" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">RM 20 - 20 credits</button>
+        <button type="button" data-amount="50" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">RM 50 - 50 credits</button>
+        <button type="button" data-amount="100" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">RM 100 - 100 credits</button>
+        <div class="flex gap-2">
+          <input id="credits-custom-amount" type="number" min="10" step="1" inputmode="numeric" placeholder="Custom amount (min RM 10)" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100">
+          <button type="button" id="credits-custom-btn" class="credits-package-btn bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg px-4">Pay</button>
+        </div>
       </div>
     </div>
   </div>
@@ -330,16 +329,22 @@
     });
   });
 
+  function topupAmount(btn) {
+    if (btn.dataset.amount) return Number(btn.dataset.amount);
+    const raw = String(document.getElementById('credits-custom-amount')?.value || '').trim();
+    if (!/^\d+$/.test(raw) || Number(raw) < 10) throw new Error('Enter a whole number of at least RM 10.');
+    return Number(raw);
+  }
+
   document.querySelectorAll('.credits-package-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const packageId = btn.dataset.package;
-      const errorEl = document.getElementById('credits-modal-error');
+            const errorEl = document.getElementById('credits-modal-error');
       errorEl.classList.add('hidden');
       try {
         const res = await authFetch(RAILWAY_CREDITS_TOPUP_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ packageId })
+          body: JSON.stringify({ amount: topupAmount(btn) })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.success) throw new Error(data.error || 'Could not start payment.');

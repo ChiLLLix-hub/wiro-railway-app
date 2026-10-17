@@ -7,7 +7,7 @@ import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
 import { hashPassword, verifyPassword, issueToken, requireAuth, requireSession, claimSessionTab, logoutSession, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt } from './auth.js';
-import { CHIP_PACKAGES, CHIP_CURRENCY, isChipConfigured, createPurchase, getPurchase } from './chip.js';
+import { MIN_TOPUP_MYR, MAX_TOPUP_MYR, SUGGESTED_TOPUPS_MYR, validateTopupAmount, CHIP_CURRENCY, isChipConfigured, createPurchase, getPurchase } from './chip.js';
 import { frontendBaseUrl, processNotificationOutbox, queueMail, queueOptInNotifications } from './notifications.js';
 
 const app = express();
@@ -1500,6 +1500,9 @@ app.get('/me/summary', apiRateLimiter, requireAuth, async (req, res) => {
 const DEMO_CREDIT_PACKAGES = { starter: 10, pro: 50, studio: 100 };
 
 app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
+  if (process.env.ENABLE_DEMO_TOPUP !== 'true') {
+    return res.status(403).json({ success: false, error: 'Demo top-up is disabled. Use /payments/checkout.' });
+  }
   try {
     const { packageId } = req.body || {};
     const amount = DEMO_CREDIT_PACKAGES[packageId];
@@ -1579,7 +1582,9 @@ app.get('/payments/packages', (req, res) => {
     success: true,
     configured: isChipConfigured(),
     currency: CHIP_CURRENCY,
-    packages: Object.entries(CHIP_PACKAGES).map(([id, p]) => ({ id, label: p.label, credits: p.credits, amount: p.amountCents / 100 }))
+    minAmount: MIN_TOPUP_MYR,
+    maxAmount: MAX_TOPUP_MYR,
+    suggested: SUGGESTED_TOPUPS_MYR,
   });
 });
 
@@ -1588,24 +1593,25 @@ app.post('/payments/checkout', apiRateLimiter, requireAuth, async (req, res) => 
     if (!isChipConfigured()) {
       return res.status(503).json({ success: false, error: 'Payments are not configured (CHIP_API_KEY / CHIP_BRAND_ID missing).' });
     }
-    const pkg = CHIP_PACKAGES[req.body?.packageId];
-    if (!pkg) {
-      return res.status(400).json({ success: false, error: `Invalid package. Choose one of: ${Object.keys(CHIP_PACKAGES).join(', ')}.` });
+    const amount = validateTopupAmount(req.body?.amount);
+    if (amount === null) {
+      return res.status(400).json({ success: false, error: `Invalid amount. Enter a whole number from ${CHIP_CURRENCY} ${MIN_TOPUP_MYR} to ${CHIP_CURRENCY} ${MAX_TOPUP_MYR}.` });
     }
+    const amountCents = amount * 100;
     const user = await findUserById(req.user.id);
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
 
     const inserted = await pool.query(
       `INSERT INTO payments (user_id, package_id, credits, amount_cents, currency) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [req.user.id, req.body.packageId, pkg.credits, pkg.amountCents, CHIP_CURRENCY]
+      [req.user.id, `topup-${amount}`, amount, amountCents, CHIP_CURRENCY]
     );
     const paymentId = inserted.rows[0].id;
     const front = frontendBaseUrl();
     try {
       const purchase = await createPurchase({
         email: user.email,
-        productName: `${pkg.label} credits (${pkg.credits})`,
-        amountCents: pkg.amountCents,
+        productName: `${amount} credits`,
+        amountCents,
         reference: paymentId,
         successRedirect: `${front}/payment-success.html?payment=${paymentId}`,
         failureRedirect: `${front}/payment-failed.html?payment=${paymentId}`,

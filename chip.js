@@ -2,11 +2,18 @@
 // the purchases endpoints of https://github.com/CHIPAsia/chip-nodejs-sdk.
 const CHIP_BASE_URL = () => String(process.env.CHIP_BASE_URL || 'https://gate.chip-in.asia/api/v1').replace(/\/+$/, '');
 
-export const CHIP_PACKAGES = {
-  starter: { credits: 10, amountCents: 1000, label: 'Starter' },
-  pro: { credits: 50, amountCents: 4500, label: 'Pro' },
-  studio: { credits: 100, amountCents: 8000, label: 'Studio' }
-};
+// Credits are sold at 1 MYR = 1 credit. Only whole-ringgit amounts >= MIN are accepted.
+export const MIN_TOPUP_MYR = 10;
+export const MAX_TOPUP_MYR = 10000;
+export const SUGGESTED_TOPUPS_MYR = [10, 20, 50, 100];
+
+// Returns the amount if valid, else null. Strict: only JSON numbers that are
+// integers; strings, booleans, decimals, negatives, NaN/Infinity are rejected.
+export function validateTopupAmount(value) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) return null;
+  if (value < MIN_TOPUP_MYR || value > MAX_TOPUP_MYR) return null;
+  return value;
+}
 export const CHIP_CURRENCY = 'MYR';
 
 export function isChipConfigured() {

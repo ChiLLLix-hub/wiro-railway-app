@@ -21,34 +21,49 @@
   const sessionController = window.WiroSession.create({ baseUrl: BACKEND_BASE_URL });
   const $ = id => document.getElementById(id);
   const showError = m => { $('error').textContent = m; $('error').classList.remove('hidden'); };
-  async function checkout(packageId, btn) {
+  async function checkout(amount, btn) {
     $('error').classList.add('hidden');
+    if (!Number.isInteger(amount) || amount < MIN) { showError(`Enter a whole number of at least RM ${MIN}.`); return; }
     btn.disabled = true;
     try {
       const res = await sessionController.fetch(`${BACKEND_BASE_URL}/payments/checkout`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ packageId })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) throw new Error(data.error || 'Could not start payment.');
       window.location.href = data.checkoutUrl;
     } catch (e) { showError(e.message); btn.disabled = false; }
   }
+  let MIN = 10;
   (async () => {
     if (!sessionController.getToken()) { showError('Please log in on the Studio page first.'); return; }
     try {
       const res = await fetch(`${BACKEND_BASE_URL}/payments/packages`);
       const data = await res.json();
+      MIN = data.minAmount;
       if (!data.configured) showError('Payments are not available right now.');
-      data.packages.forEach(p => {
+      data.suggested.forEach(n => {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm transition disabled:opacity-50';
-        const l = document.createElement('span'); l.textContent = `${p.label} - ${p.credits} credits`;
-        const r = document.createElement('span'); r.className = 'font-semibold text-emerald-300'; r.textContent = `${data.currency} ${p.amount.toFixed(2)}`;
+        const l = document.createElement('span'); l.textContent = `${n} credits`;
+        const r = document.createElement('span'); r.className = 'font-semibold text-emerald-300'; r.textContent = `${data.currency} ${n.toFixed(2)}`;
         b.append(l, r);
-        b.addEventListener('click', () => checkout(p.id, b));
+        b.addEventListener('click', () => checkout(n, b));
         $('packages').appendChild(b);
       });
+      const row = document.createElement('div'); row.className = 'flex gap-2';
+      const input = document.createElement('input');
+      input.type = 'number'; input.min = String(MIN); input.step = '1'; input.placeholder = `Custom amount (min RM ${MIN})`;
+      input.className = 'flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm';
+      const pay = document.createElement('button'); pay.type = 'button'; pay.textContent = 'Pay';
+      pay.className = 'bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg px-4 disabled:opacity-50';
+      pay.addEventListener('click', () => {
+        const raw = input.value.trim();
+        checkout(/^\d+$/.test(raw) ? Number(raw) : NaN, pay);
+      });
+      row.append(input, pay);
+      $('packages').appendChild(row);
     } catch (e) { showError('Could not load packages.'); }
   })();
   </script>
