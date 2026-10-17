@@ -1525,7 +1525,7 @@ app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
       eventType: 'demo_credit_added',
       subject: 'Demo credits added',
       message: `Demo credits added for testing: ${amount} credits. No payment was processed.`,
-      link: `${frontendBaseUrl()}/dashboard.html`
+      link: `${frontendBaseUrl()}/wiro/dashboard.html`
     });
 
     return res.json({ success: true, credits: toCreditsNumber(rows[0].credits), added: amount });
@@ -1623,7 +1623,7 @@ app.post('/payments/checkout', apiRateLimiter, requireAuth, async (req, res) => 
         amountCents,
         reference: paymentId,
         successRedirect: `${front}/wiro/payment-success.html?payment=${paymentId}`,
-        failureRedirect: `${front}/payment-failed.html?payment=${paymentId}`,
+        failureRedirect: `${front}/wiro/payment-failed.html?payment=${paymentId}`,
         successCallback: `${backendBaseUrl(req)}/payments/chip/callback/${paymentId}`
       });
       await pool.query(`UPDATE payments SET chip_purchase_id = $1, updated_at = now() WHERE id = $2`, [purchase.id, paymentId]);
@@ -2243,7 +2243,7 @@ app.get('/task/:taskId', apiRateLimiter, requireAuth, async (req, res) => {
               eventType: 'generation_success',
               subject: 'Your generation is ready',
               message: 'Your AI generation completed successfully. Open the result here:',
-              link: mediaOutput?.url || `${frontendBaseUrl()}/dashboard.html`
+              link: mediaOutput?.url || `${frontendBaseUrl()}/wiro/dashboard.html`
             });
           } catch (notificationError) {
             console.error('Could not queue generation notification:', notificationError);
@@ -2377,7 +2377,7 @@ async function checkPendingGenerations() {
               eventType: 'generation_success',
               subject: 'Your generation is ready',
               message: 'Your AI generation completed successfully. Open the result here:',
-              link: outputs[0]?.url || `${frontendBaseUrl()}/dashboard.html`
+              link: outputs[0]?.url || `${frontendBaseUrl()}/wiro/dashboard.html`
             });
           } catch (error) {
             console.error('Could not queue background generation notification:', error);
