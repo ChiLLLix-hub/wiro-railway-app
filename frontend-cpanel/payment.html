@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buy Credits - Mygenx Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
+  <main class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+    <h1 class="text-xl font-bold">Buy Credits</h1>
+    <p class="text-slate-400 text-sm">Secure payment via CHIP (FPX, cards, e-wallets). You will be redirected to complete payment.</p>
+    <div id="packages" class="space-y-2"></div>
+    <p id="error" class="hidden text-xs text-red-400"></p>
+    <a href="index.html" class="block text-center text-sm text-slate-400 hover:text-slate-200">Back to Studio</a>
+  </main>
+  <script src="session.js"></script>
+  <script>
+  const BACKEND_BASE_URL = String(window.WIRO_API_BASE_URL || window.__WIRO_API_BASE_URL || 'https://wiro-railway-app-production.up.railway.app').replace(/\/+$/, '');
+  const sessionController = window.WiroSession.create({ baseUrl: BACKEND_BASE_URL });
+  const $ = id => document.getElementById(id);
+  const showError = m => { $('error').textContent = m; $('error').classList.remove('hidden'); };
+  async function checkout(amount, btn) {
+    $('error').classList.add('hidden');
+    if (!Number.isInteger(amount) || amount < MIN) { showError(`Enter a whole number of at least RM ${MIN}.`); return; }
+    btn.disabled = true;
+    try {
+      const res = await sessionController.fetch(`${BACKEND_BASE_URL}/payments/checkout`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || 'Could not start payment.');
+      window.location.href = data.checkoutUrl;
+    } catch (e) { showError(e.message); btn.disabled = false; }
+  }
+  let MIN = 10;
+  (async () => {
+    if (!sessionController.getToken()) { showError('Please log in on the Studio page first.'); return; }
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/payments/packages`);
+      const data = await res.json();
+      MIN = data.minAmount;
+      if (!data.configured) showError('Payments are not available right now.');
+      if (data.saleActive) {
+        const badge = document.createElement('p');
+        badge.className = 'text-xs font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2';
+        badge.textContent = 'Limited-time price slash!' + (data.saleEndsAt ? ` Ends ${new Date(data.saleEndsAt).toLocaleDateString()}.` : '');
+        $('packages').appendChild(badge);
+      }
+      data.suggested.forEach(({ credits: n, price, originalPrice }) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm transition disabled:opacity-50';
+        const l = document.createElement('span'); l.textContent = `${n} credits`;
+        const r = document.createElement('span'); r.className = 'font-semibold text-emerald-300'; if (price < originalPrice) {
+          const old = document.createElement('s'); old.className = 'text-slate-500 font-normal mr-2'; old.textContent = originalPrice.toFixed(2);
+          r.append(old, `${data.currency} ${price.toFixed(2)}`);
+        } else r.textContent = `${data.currency} ${price.toFixed(2)}`;
+        b.append(l, r);
+        b.addEventListener('click', () => checkout(n, b));
+        $('packages').appendChild(b);
+      });
+      const row = document.createElement('div'); row.className = 'flex gap-2';
+      const input = document.createElement('input');
+      input.type = 'number'; input.min = String(MIN); input.step = '1'; input.placeholder = `Custom amount (min RM ${MIN})`;
+      input.className = 'flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm';
+      const pay = document.createElement('button'); pay.type = 'button'; pay.textContent = 'Pay';
+      pay.className = 'bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg px-4 disabled:opacity-50';
+      pay.addEventListener('click', () => {
+        const raw = input.value.trim();
+        checkout(/^\d+$/.test(raw) ? Number(raw) : NaN, pay);
+      });
+      row.append(input, pay);
+      $('packages').appendChild(row);
+    } catch (e) { showError('Could not load packages.'); }
+  })();
+  </script>
+</body>
+</html>

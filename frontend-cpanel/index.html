@@ -105,17 +105,16 @@
       <button id="credits-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
       <h3 class="text-lg font-bold text-slate-100">Add Credits</h3>
       <p id="credits-modal-message" class="text-amber-300 text-xs bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">You have insufficient credits to generate. Choose a package below to continue.</p>
-      <p class="text-slate-500 text-[11px]">Demo payment page — no real charge is made yet. Credits are added instantly for testing.</p>
+      <p class="text-slate-500 text-[11px]">Limited-time price slash: 50 credits RM45, 100 credits RM80. Secure payment via CHIP. You will be redirected to complete payment; credits are added once it succeeds.</p>
       <div class="space-y-2">
-        <button type="button" data-package="starter" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition">
-          <span>Starter</span><span class="font-semibold text-emerald-300">10 credits</span>
-        </button>
-        <button type="button" data-package="pro" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition">
-          <span>Pro</span><span class="font-semibold text-emerald-300">50 credits</span>
-        </button>
-        <button type="button" data-package="studio" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition">
-          <span>Studio</span><span class="font-semibold text-emerald-300">100 credits</span>
-        </button>
+        <button type="button" data-amount="10" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition">RM 10 - 10 credits</button>
+        <button type="button" data-amount="20" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition">RM 20 - 20 credits</button>
+        <button type="button" data-amount="50" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition"><s class="text-slate-500">RM 50</s> RM 45 - 50 credits <span class="text-amber-300 text-xs">Sale</span></button>
+        <button type="button" data-amount="100" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition"><s class="text-slate-500">RM 100</s> RM 80 - 100 credits <span class="text-amber-300 text-xs">Sale</span></button>
+        <div class="flex gap-2">
+          <input id="credits-custom-amount" type="number" min="10" step="1" inputmode="numeric" placeholder="Custom credits (min 10)" class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100">
+          <button type="button" id="credits-custom-btn" class="credits-package-btn bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg px-4">Pay</button>
+        </div>
       </div>
       <p id="credits-modal-error" class="hidden text-xs text-red-400"></p>
     </div>
@@ -2883,7 +2882,7 @@
   // ------------------------------------------------------------------
   // Top bar: demo "Add Credits" modal (wired to POST /me/credits/topup)
   // ------------------------------------------------------------------
-  const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/me/credits/topup`;
+  const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/payments/checkout`;
   const creditsModal = document.getElementById('credits-modal');
   const creditsModalClose = document.getElementById('credits-modal-close');
   const creditsModalMessage = document.getElementById('credits-modal-message');
@@ -2903,6 +2902,13 @@
   creditsModalClose?.addEventListener('click', closeCreditsModal);
   creditsModal?.addEventListener('click', (e) => { if (e.target === creditsModal) closeCreditsModal(); });
 
+  function topupAmount(btn) {
+    if (btn.dataset.amount) return Number(btn.dataset.amount);
+    const raw = String(document.getElementById('credits-custom-amount')?.value || '').trim();
+    if (!/^\d+$/.test(raw) || Number(raw) < 10) throw new Error('Enter a whole number of at least RM 10.');
+    return Number(raw);
+  }
+
   document.querySelectorAll('.credits-package-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       if (!getAuthToken()) {
@@ -2916,12 +2922,12 @@
         const res = await authFetch(RAILWAY_CREDITS_TOPUP_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ packageId: btn.dataset.package })
+          body: JSON.stringify({ amount: topupAmount(btn) })
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to add credits.');
-        updateCreditsDisplay(data.credits);
-        closeCreditsModal();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not start payment.');
+        window.location.href = data.checkoutUrl;
+        return;
       } catch (err) {
         if (creditsModalError) {
           creditsModalError.textContent = err.message || 'Something went wrong.';

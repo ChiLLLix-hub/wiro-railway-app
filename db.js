@@ -174,6 +174,29 @@ export async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
+  // Allow real CHIP payment top-ups alongside the legacy demo type.
+  await pool.query(`ALTER TABLE credit_transactions DROP CONSTRAINT IF EXISTS credit_transactions_type_check;`);
+  await pool.query(`ALTER TABLE credit_transactions ADD CONSTRAINT credit_transactions_type_check CHECK (type IN ('admin_adjust', 'topup_demo', 'topup_chip'));`);
+
+  // CHIP (chip-in.asia) payment purchases. `credited` flips to true exactly
+  // once (guarded UPDATE) so callbacks + redirect verification can't
+  // double-credit a user.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      package_id TEXT NOT NULL,
+      credits NUMERIC NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'MYR',
+      chip_purchase_id TEXT UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      credited BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS payments_user_id_idx ON payments (user_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS credit_transactions_user_id_idx ON credit_transactions (user_id);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS credit_transactions_created_at_idx ON credit_transactions (created_at);`);
 

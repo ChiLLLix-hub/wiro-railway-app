@@ -89,6 +89,8 @@
               <th class="py-2 pr-4" data-user-sort="credits"><button type="button" class="font-semibold hover:text-white">Credits <span data-sort-indicator></span></button></th>
               <th class="py-2 pr-4" data-user-sort="status"><button type="button" class="font-semibold hover:text-white">Status <span data-sort-indicator></span></button></th>
               <th class="py-2 pr-4" data-user-sort="last_login_at"><button type="button" class="font-semibold hover:text-white">Last login <span data-sort-indicator></span></button></th>
+              <th class="py-2 pr-4" data-user-sort="inactive_days"><button type="button" class="font-semibold hover:text-white">Inactive (days) <span data-sort-indicator></span></button></th>
+              <th class="py-2 pr-4" data-user-sort="credits_expire_at"><button type="button" class="font-semibold hover:text-white" title="1 year after last login (or sign-up if never logged in). Manual review only.">Credits expire <span data-sort-indicator></span></button></th>
               <th class="py-2 pr-4">Actions</th>
             </tr>
           </thead>
@@ -351,7 +353,11 @@
         let comparison;
         if (userSortColumn === 'credits') {
           comparison = (Number(left) || 0) - (Number(right) || 0);
-        } else if (userSortColumn === 'last_login_at') {
+        } else if (userSortColumn === 'inactive_days') {
+          // Never-logged-in users (null) sort as the most inactive.
+          comparison = (left === null || left === undefined ? Infinity : left) - (right === null || right === undefined ? Infinity : right);
+          if (Number.isNaN(comparison)) comparison = 0;
+        } else if (userSortColumn === 'last_login_at' || userSortColumn === 'credits_expire_at') {
           comparison = (left ? new Date(left).getTime() : 0) - (right ? new Date(right).getTime() : 0);
         } else {
           comparison = String(left ?? '').localeCompare(String(right ?? ''), undefined, { sensitivity: 'base' });
@@ -374,6 +380,8 @@
         <td class="py-2 pr-4">${formatCost(user.credits)}</td>
         <td class="py-2 pr-4 ${statusClass}">${statusLabel}</td>
         <td class="py-2 pr-4 text-slate-400">${formatDate(user.last_login_at)}</td>
+        <td class="py-2 pr-4 ${user.inactive_days === null ? 'text-slate-500' : (user.inactive_days >= 365 ? 'text-red-400 font-semibold' : 'text-slate-300')}">${user.inactive_days === null ? 'Never' : `Inactive ${user.inactive_days} day${user.inactive_days === 1 ? '' : 's'}`}</td>
+        <td class="py-2 pr-4 text-slate-400">${formatDate(user.credits_expire_at)}</td>
         <td class="py-2 pr-4 space-x-1 whitespace-nowrap">
           <button class="credit-btn text-xs px-2 py-1 rounded border border-slate-700 hover:bg-slate-800" data-id="${user.id}" data-email="${escapeHtml(user.email)}">Credits</button>
           ${user.is_active
