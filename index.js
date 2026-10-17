@@ -1169,6 +1169,54 @@ function toCreditsNumber(value) {
 // letting the request through with no hold at all.
 const FALLBACK_HOLD_CREDITS = 1;
 
+// Generation limits (admins are exempt from both): users whose balance is at
+// or below MIN_CREDITS_TO_GENERATE are blocked, and each user may have at
+// most MAX_CONCURRENT_JOBS generations in flight at once.
+const MIN_CREDITS_TO_GENERATE = Number.isFinite(Number(process.env.MIN_CREDITS_TO_GENERATE)) && process.env.MIN_CREDITS_TO_GENERATE !== undefined && process.env.MIN_CREDITS_TO_GENERATE !== ''
+  ? Number(process.env.MIN_CREDITS_TO_GENERATE) : 5;
+const MAX_CONCURRENT_JOBS = Number.parseInt(process.env.MAX_CONCURRENT_JOBS, 10) > 0
+  ? Number.parseInt(process.env.MAX_CONCURRENT_JOBS, 10) : 5;
+const RESERVATION_TTL_MINUTES = 10;
+
+// Reserves one of the user's concurrent-job slots *before* calling Wiro, by
+// inserting a placeholder 'reserved' generations row under a per-user
+// advisory lock - so parallel requests can't all pass the count check
+// before any of them has recorded a job. Returns the reservation id, or
+// null if the user already has MAX_CONCURRENT_JOBS active jobs.
+async function reserveGenerationSlot(userId, { model, tag, prompt, params }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`gen-slot:${userId}`]);
+    const { rows: countRows } = await client.query(
+      `SELECT COUNT(*)::int AS active FROM generations
+       WHERE user_id = $1 AND (status = 'pending' OR (status = 'reserved' AND created_at > now() - make_interval(mins => $2)))`,
+      [userId, RESERVATION_TTL_MINUTES]
+    );
+    if (countRows[0].active >= MAX_CONCURRENT_JOBS) {
+      await client.query('ROLLBACK');
+      return { id: null, active: countRows[0].active };
+    }
+    const { rows } = await client.query(
+      `INSERT INTO generations (user_id, wiro_task_id, model_slug, model_tag, prompt, params, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'reserved') RETURNING id`,
+      [userId, `slot:${randomUUID()}`, model, tag, prompt, params]
+    );
+    await client.query('COMMIT');
+    return { id: rows[0].id, active: countRows[0].active + 1 };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function releaseGenerationSlot(reservationId) {
+  if (!reservationId) return;
+  await pool.query(`DELETE FROM generations WHERE id = $1 AND status = 'reserved'`, [reservationId]);
+}
+
 // Atomically attempts to place a hold of `amount` credits on `userId`'s
 // balance. The `AND credits >= $1` condition and the UPDATE itself run as
 // one statement, so Postgres takes a row lock on the user's row for the
@@ -1177,12 +1225,12 @@ const FALLBACK_HOLD_CREDITS = 1;
 // closing the race that let multiple concurrent generations all pass a
 // separate SELECT-then-check. Returns the new balance on success, or null
 // if the user doesn't have enough credits available to hold.
-async function holdUserCredits(userId, amount) {
+async function holdUserCredits(userId, amount, minBalanceExclusive = null) {
   const { rows } = await pool.query(
     `UPDATE users SET credits = credits - $1, updated_at = now()
-     WHERE id = $2 AND credits >= $1
+     WHERE id = $2 AND credits >= $1 AND ($3::numeric IS NULL OR credits > $3::numeric)
      RETURNING credits`,
-    [amount, userId]
+    [amount, userId, minBalanceExclusive]
   );
   return rows[0] ? toCreditsNumber(rows[0].credits) : null;
 }
@@ -1623,7 +1671,7 @@ app.get('/me/generations', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT id, wiro_task_id, model_slug, model_tag, prompt, params, status, total_cost, held_amount, outputs, created_at, completed_at
-       FROM generations WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
+       FROM generations WHERE user_id = $1 AND status <> 'reserved' ORDER BY created_at DESC LIMIT 100`,
       [req.user.id]
     );
     return res.json({ success: true, generations: rows });
@@ -1783,10 +1831,10 @@ app.get('/admin/generations', apiRateLimiter, requireAuth, requireAdmin, async (
   try {
     const search = String(req.query.search || '').trim();
     const params = [];
-    let where = '';
+    let where = `WHERE g.status <> 'reserved'`;
     if (search) {
       params.push(`%${search.toLowerCase()}%`);
-      where = `WHERE lower(u.email) LIKE $1 OR lower(COALESCE(g.model_slug, '')) LIKE $1 OR lower(COALESCE(g.prompt, '')) LIKE $1`;
+      where += ` AND (lower(u.email) LIKE $1 OR lower(COALESCE(g.model_slug, '')) LIKE $1 OR lower(COALESCE(g.prompt, '')) LIKE $1)`;
     }
 
     const { rows } = await pool.query(
@@ -1923,6 +1971,8 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
   // to later settle it, or an immediate refund.
   let heldAmount = 0;
   let holdPlaced = false;
+  let reservationId = null;
+  const isAdmin = req.user.role === 'admin';
 
   try {
     const { model, prompt, tag, ...rest } = req.body || {};
@@ -1941,6 +1991,37 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
     // slug, bypassing the fact that the frontend never lists/offers it.
     if (await isModelSlugBlocked(selectedModel, { exceptKeyword })) {
       return res.status(403).json({ success: false, error: `Model "${selectedModel}" is not available.` });
+    }
+
+    if (!isAdmin) {
+      const { rows: balanceRows } = await pool.query('SELECT credits FROM users WHERE id = $1', [req.user.id]);
+      const balance = balanceRows[0] ? toCreditsNumber(balanceRows[0].credits) : 0;
+      if (balance <= MIN_CREDITS_TO_GENERATE) {
+        return res.status(402).json({
+          success: false,
+          error: `Generation is blocked while your balance is ${MIN_CREDITS_TO_GENERATE} credits or below. Please add credits to continue.`,
+          code: 'CREDITS_TOO_LOW',
+          credits: balance,
+          minCredits: MIN_CREDITS_TO_GENERATE
+        });
+      }
+
+      const slot = await reserveGenerationSlot(req.user.id, {
+        model: selectedModel,
+        tag: typeof tag === 'string' ? tag : null,
+        prompt: prompt || 'A cinematic studio render...',
+        params: rest
+      });
+      if (!slot.id) {
+        return res.status(429).json({
+          success: false,
+          error: `You already have ${MAX_CONCURRENT_JOBS} jobs processing. Please wait for a queued job to finish before starting another.`,
+          code: 'CONCURRENT_LIMIT',
+          activeJobs: slot.active,
+          limit: MAX_CONCURRENT_JOBS
+        });
+      }
+      reservationId = slot.id;
     }
 
     // Estimate this run's cost the same way GET /models/estimate-cost does
@@ -1967,8 +2048,25 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
     // request's hold is serialized against the same balance, so only as
     // many can succeed as the user can actually afford, no matter how many
     // land at the same time.
-    const balanceAfterHold = await holdUserCredits(req.user.id, heldAmount);
+    const balanceAfterHold = await holdUserCredits(req.user.id, heldAmount, isAdmin ? null : MIN_CREDITS_TO_GENERATE);
     if (balanceAfterHold === null) {
+      if (!isAdmin) {
+        const { rows: balanceRows } = await pool.query('SELECT credits FROM users WHERE id = $1', [req.user.id]);
+        const balance = balanceRows[0] ? toCreditsNumber(balanceRows[0].credits) : 0;
+        if (balance <= MIN_CREDITS_TO_GENERATE) {
+          await releaseGenerationSlot(reservationId);
+          reservationId = null;
+          return res.status(402).json({
+            success: false,
+            error: `Generation is blocked while your balance is ${MIN_CREDITS_TO_GENERATE} credits or below. Please add credits to continue.`,
+            code: 'CREDITS_TOO_LOW',
+            credits: balance,
+            minCredits: MIN_CREDITS_TO_GENERATE
+          });
+        }
+      }
+      await releaseGenerationSlot(reservationId);
+      reservationId = null;
       return res.status(402).json({
         success: false,
         error: 'You have insufficient credits to generate. Please add credits to continue.',
@@ -2017,6 +2115,8 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
       // there's nothing to settle later.
       await refundUserCredits(req.user.id, heldAmount);
       holdPlaced = false;
+      await releaseGenerationSlot(reservationId);
+      reservationId = null;
       return res.status(500).json({ error: run?.errors || 'Model execution failed' });
     }
 
@@ -2027,12 +2127,20 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
     // is stored here too so /task/:taskId can settle (refund or charge the
     // difference) against exactly what was put on hold for this job.
     try {
-      await pool.query(
-        `INSERT INTO generations (user_id, wiro_task_id, model_slug, model_tag, prompt, params, status, held_amount)
-         VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
-         ON CONFLICT (wiro_task_id) DO NOTHING`,
-        [req.user.id, run.taskid, selectedModel, typeof tag === 'string' ? tag : null, options.prompt, rest, heldAmount]
-      );
+      const converted = reservationId ? await pool.query(
+        `UPDATE generations SET wiro_task_id = $1, status = 'pending', held_amount = $2
+         WHERE id = $3 AND status = 'reserved'`,
+        [run.taskid, heldAmount, reservationId]
+      ) : { rowCount: 0 };
+      reservationId = null;
+      if (!converted.rowCount) {
+        await pool.query(
+          `INSERT INTO generations (user_id, wiro_task_id, model_slug, model_tag, prompt, params, status, held_amount)
+           VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+           ON CONFLICT (wiro_task_id) DO NOTHING`,
+          [req.user.id, run.taskid, selectedModel, typeof tag === 'string' ? tag : null, options.prompt, rest, heldAmount]
+        );
+      }
     } catch (dbError) {
       // Don't fail the whole generation if the ownership record can't be
       // written - but log loudly, since GET /task/:taskId will then deny
@@ -2068,6 +2176,7 @@ app.post('/generate', apiRateLimiter, requireAuth, async (req, res) => {
         console.error('Failed to refund credit hold after an error:', refundError);
       });
     }
+    await releaseGenerationSlot(reservationId).catch(() => {});
     return res.status(500).json({ success: false, error: error.message });
   }
 });
