@@ -1622,8 +1622,8 @@ app.post('/payments/checkout', apiRateLimiter, requireAuth, async (req, res) => 
         productName: `${amount} credits`,
         amountCents,
         reference: paymentId,
-        successRedirect: `${front}/payment-success.html?payment=${paymentId}`,
-        failureRedirect: `${front}/payment-failed.html?payment=${paymentId}`,
+        successRedirect: `${front}/wiro/payment-success.html?payment=${paymentId}`,
+        failureRedirect: `${front}/wiro/payment-failed.html?payment=${paymentId}`,
         successCallback: `${backendBaseUrl(req)}/payments/chip/callback/${paymentId}`
       });
       await pool.query(`UPDATE payments SET chip_purchase_id = $1, updated_at = now() WHERE id = $2`, [purchase.id, paymentId]);
