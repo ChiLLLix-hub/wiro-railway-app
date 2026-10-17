@@ -1685,13 +1685,15 @@ app.get('/admin/users', apiRateLimiter, requireAuth, requireAdmin, async (req, r
     }
 
     const { rows } = await pool.query(
-      `SELECT id, email, role, display_name, is_active, blacklisted, blacklist_reason, credits, last_login_at, created_at
+      `SELECT id, email, role, display_name, is_active, blacklisted, blacklist_reason, credits, last_login_at, created_at,
+              (CURRENT_DATE - last_login_at::date) AS inactive_days,
+              (COALESCE(last_login_at, created_at) + INTERVAL '1 year') AS credits_expire_at
        FROM users ${where} ORDER BY created_at DESC LIMIT 500`,
       params
     );
     return res.json({
       success: true,
-      users: rows.map(u => ({ ...u, credits: toCreditsNumber(u.credits) }))
+      users: rows.map(u => ({ ...u, credits: toCreditsNumber(u.credits), inactive_days: u.inactive_days === null ? null : Number(u.inactive_days) }))
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
