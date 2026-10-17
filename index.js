@@ -1608,7 +1608,14 @@ app.post('/payments/checkout', apiRateLimiter, requireAuth, async (req, res) => 
       [req.user.id, `topup-${amount}`, amount, amountCents, CHIP_CURRENCY]
     );
     const paymentId = inserted.rows[0].id;
-    const front = frontendBaseUrl();
+    let front = frontendBaseUrl();
+    if (!process.env.FRONTEND_BASE_URL) {
+      // No explicit frontend host configured: send the user back to the site that started checkout.
+      try {
+        const origin = new URL(req.get('origin') || '').origin;
+        if (/^https?:$/.test(new URL(origin).protocol)) front = origin;
+      } catch { /* keep default */ }
+    }
     try {
       const purchase = await createPurchase({
         email: user.email,
