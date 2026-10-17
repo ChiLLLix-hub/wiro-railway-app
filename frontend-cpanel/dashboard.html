@@ -71,7 +71,6 @@
         <h2 class="text-lg font-bold">Credits</h2>
         <button id="add-credits-btn" type="button" class="text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition">Add Credits</button>
       </div>
-      <p class="text-xs text-slate-400">Demo payment only - no real charge is made yet.</p>
     </section>
 
     <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-5">
@@ -82,13 +81,12 @@
       <div class="overflow-x-auto">
         <table class="w-full min-w-[34rem] text-sm text-left">
           <thead class="text-slate-400 border-b border-slate-800">
-            <tr><th class="py-2 pr-4">Channel</th><th class="py-2 pr-4">Generation completed</th><th class="py-2 pr-4">Demo credits added</th><th class="py-2">Account</th></tr>
+            <tr><th class="py-2 pr-4">Channel</th><th class="py-2 pr-4">Generation completed</th><th class="py-2">Account</th></tr>
           </thead>
           <tbody class="divide-y divide-slate-800">
             <tr>
               <th class="py-3 pr-4 font-medium">Email</th>
               <td class="py-3 pr-4"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" data-channel="email" data-event="generation_success" class="notification-pref peer sr-only"><span class="w-11 h-6 bg-slate-700 rounded-full peer-checked:bg-blue-500 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5"></span><span class="ml-2 text-xs text-slate-400">Off / On</span></label></td>
-              <td class="py-3 pr-4"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" data-channel="email" data-event="demo_credit_added" class="notification-pref peer sr-only"><span class="w-11 h-6 bg-slate-700 rounded-full peer-checked:bg-blue-500 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5"></span><span class="ml-2 text-xs text-slate-400">Off / On</span></label></td>
               <td id="email-link-status" class="py-3 text-xs text-slate-400">Checking…</td>
             </tr>
           </tbody>
