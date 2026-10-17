@@ -105,7 +105,7 @@
       <button id="credits-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
       <h3 class="text-lg font-bold text-slate-100">Add Credits</h3>
       <p id="credits-modal-message" class="text-amber-300 text-xs bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">You have insufficient credits to generate. Choose a package below to continue.</p>
-      <p class="text-slate-500 text-[11px]">Demo payment page — no real charge is made yet. Credits are added instantly for testing.</p>
+      <p class="text-slate-500 text-[11px]">Secure payment via CHIP. You will be redirected to complete payment; credits are added once it succeeds.</p>
       <div class="space-y-2">
         <button type="button" data-package="starter" class="credits-package-btn w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm text-slate-100 transition">
           <span>Starter</span><span class="font-semibold text-emerald-300">10 credits</span>
@@ -2883,7 +2883,7 @@
   // ------------------------------------------------------------------
   // Top bar: demo "Add Credits" modal (wired to POST /me/credits/topup)
   // ------------------------------------------------------------------
-  const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/me/credits/topup`;
+  const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/payments/checkout`;
   const creditsModal = document.getElementById('credits-modal');
   const creditsModalClose = document.getElementById('credits-modal-close');
   const creditsModalMessage = document.getElementById('credits-modal-message');
@@ -2919,9 +2919,9 @@
           body: JSON.stringify({ packageId: btn.dataset.package })
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to add credits.');
-        updateCreditsDisplay(data.credits);
-        closeCreditsModal();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not start payment.');
+        window.location.href = data.checkoutUrl;
+        return;
       } catch (err) {
         if (creditsModalError) {
           creditsModalError.textContent = err.message || 'Something went wrong.';

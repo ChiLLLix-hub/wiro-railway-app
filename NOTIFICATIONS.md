@@ -25,3 +25,11 @@ Configure the sending domain's SPF and DKIM records with the mail host, and add 
 The database outbox retries failed deliveries with increasing delays and uses unique event/channel keys to avoid duplicate sends. The Railway process checks pending generations in the background, so generation notifications do not depend on the browser remaining open. Demo top-ups remain test credits, not proof of a payment.
 
 After configuring email, verify its connection with a user account and enable the desired event/channel toggles in the dashboard. Provider failures leave queued messages for retry and are recorded in server logs.
+
+## CHIP payments (Railway variables)
+
+- `CHIP_API_KEY` (required): CHIP secret key.
+- `CHIP_BRAND_ID` (required): CHIP brand ID.
+- `BACKEND_BASE_URL` (recommended): public Railway URL, used for CHIP's payment callback.
+- `FRONTEND_BASE_URL`: site that hosts `payment-success.html` / `payment-failed.html`.
+- `CHIP_BASE_URL` (optional): defaults to `https://gate.chip-in.asia/api/v1`.

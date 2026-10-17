@@ -131,7 +131,7 @@
     <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 relative">
       <button id="credits-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
       <h3 class="text-lg font-bold text-slate-100">Add Credits</h3>
-      <p class="text-slate-400 text-xs">Demo checkout - no real payment is processed yet.</p>
+      <p class="text-slate-400 text-xs">Secure payment via CHIP - you will be redirected to complete payment.</p>
       <div id="credits-modal-error" class="hidden text-xs text-red-400"></div>
       <div class="space-y-2">
         <button data-package="starter" class="credits-package-btn w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 transition">
@@ -156,7 +156,7 @@
   const RAILWAY_ME_URL = `${BACKEND_BASE_URL}/me`;
   const RAILWAY_ME_SUMMARY_URL = `${BACKEND_BASE_URL}/me/summary`;
   const RAILWAY_ME_GENERATIONS_URL = `${BACKEND_BASE_URL}/me/generations`;
-  const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/me/credits/topup`;
+  const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/payments/checkout`;
   const RAILWAY_NOTIFICATION_SETTINGS_URL = `${BACKEND_BASE_URL}/me/notification-settings`;
   const REGENERATE_STORAGE_KEY = 'wiroRegeneratePreset';
 
@@ -342,9 +342,8 @@
           body: JSON.stringify({ packageId })
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) throw new Error(data.error || 'Top-up failed.');
-        closeCreditsModal();
-        await refreshDashboard();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Could not start payment.');
+        window.location.href = data.checkoutUrl;
       } catch (error) {
         errorEl.textContent = error.message;
         errorEl.classList.remove('hidden');
