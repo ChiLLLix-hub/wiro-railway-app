@@ -7,6 +7,7 @@ import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
 import { hashPassword, verifyPassword, issueToken, requireAuth, requireSession, claimSessionTab, logoutSession, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt } from './auth.js';
+import { CHIP_PACKAGES, CHIP_CURRENCY, isChipConfigured, createPurchase, getPurchase } from './chip.js';
 import { frontendBaseUrl, processNotificationOutbox, queueMail, queueOptInNotifications } from './notifications.js';
 
 const app = express();
@@ -1525,6 +1526,120 @@ app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
     });
 
     return res.json({ success: true, credits: toCreditsNumber(rows[0].credits), added: amount });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CHIP payment gateway (chip-in.asia) - real credit purchases.
+// Env: CHIP_API_KEY, CHIP_BRAND_ID, optional CHIP_BASE_URL, BACKEND_BASE_URL.
+// Status is never trusted from the redirect/callback payload; we always
+// re-fetch the purchase from CHIP and credit exactly once.
+// ---------------------------------------------------------------------------
+const CHIP_PAID_STATUSES = new Set(['paid']);
+const CHIP_FAILED_STATUSES = new Set(['error', 'cancelled', 'expired', 'blocked', 'overdue', 'refunded', 'chargeback']);
+
+function backendBaseUrl(req) {
+  return String(process.env.BACKEND_BASE_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+}
+
+async function syncChipPayment(paymentId) {
+  const { rows } = await pool.query(`SELECT * FROM payments WHERE id = $1`, [paymentId]);
+  const payment = rows[0];
+  if (!payment || !payment.chip_purchase_id) return payment || null;
+  if (payment.credited || payment.status === 'failed') return payment;
+
+  const purchase = await getPurchase(payment.chip_purchase_id);
+  const chipStatus = String(purchase.status || '').toLowerCase();
+  const paid = CHIP_PAID_STATUSES.has(chipStatus)
+    && purchase.purchase?.total === payment.amount_cents
+    && purchase.purchase?.currency === payment.currency;
+
+  if (paid) {
+    const claimed = await pool.query(
+      `UPDATE payments SET status = 'paid', credited = true, updated_at = now()
+       WHERE id = $1 AND credited = false RETURNING user_id, credits, package_id`,
+      [payment.id]
+    );
+    if (claimed.rows[0]) {
+      const { user_id, credits, package_id } = claimed.rows[0];
+      await pool.query(`UPDATE users SET credits = credits + $1, updated_at = now() WHERE id = $2`, [credits, user_id]);
+      await recordCreditTransaction({ userId: user_id, amount: credits, type: 'topup_chip', reason: `CHIP payment: ${package_id} package (${payment.chip_purchase_id})` });
+    }
+  } else if (CHIP_FAILED_STATUSES.has(chipStatus)) {
+    await pool.query(`UPDATE payments SET status = 'failed', updated_at = now() WHERE id = $1 AND credited = false`, [payment.id]);
+  }
+  const refreshed = await pool.query(`SELECT * FROM payments WHERE id = $1`, [payment.id]);
+  return refreshed.rows[0];
+}
+
+app.get('/payments/packages', (req, res) => {
+  res.json({
+    success: true,
+    configured: isChipConfigured(),
+    currency: CHIP_CURRENCY,
+    packages: Object.entries(CHIP_PACKAGES).map(([id, p]) => ({ id, label: p.label, credits: p.credits, amount: p.amountCents / 100 }))
+  });
+});
+
+app.post('/payments/checkout', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    if (!isChipConfigured()) {
+      return res.status(503).json({ success: false, error: 'Payments are not configured (CHIP_API_KEY / CHIP_BRAND_ID missing).' });
+    }
+    const pkg = CHIP_PACKAGES[req.body?.packageId];
+    if (!pkg) {
+      return res.status(400).json({ success: false, error: `Invalid package. Choose one of: ${Object.keys(CHIP_PACKAGES).join(', ')}.` });
+    }
+    const user = await findUserById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+
+    const inserted = await pool.query(
+      `INSERT INTO payments (user_id, package_id, credits, amount_cents, currency) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [req.user.id, req.body.packageId, pkg.credits, pkg.amountCents, CHIP_CURRENCY]
+    );
+    const paymentId = inserted.rows[0].id;
+    const front = frontendBaseUrl();
+    try {
+      const purchase = await createPurchase({
+        email: user.email,
+        productName: `${pkg.label} credits (${pkg.credits})`,
+        amountCents: pkg.amountCents,
+        reference: paymentId,
+        successRedirect: `${front}/payment-success.html?payment=${paymentId}`,
+        failureRedirect: `${front}/payment-failed.html?payment=${paymentId}`,
+        successCallback: `${backendBaseUrl(req)}/payments/chip/callback/${paymentId}`
+      });
+      await pool.query(`UPDATE payments SET chip_purchase_id = $1, updated_at = now() WHERE id = $2`, [purchase.id, paymentId]);
+      return res.json({ success: true, paymentId, checkoutUrl: purchase.checkout_url });
+    } catch (error) {
+      await pool.query(`UPDATE payments SET status = 'failed', updated_at = now() WHERE id = $1`, [paymentId]);
+      return res.status(502).json({ success: false, error: error.message });
+    }
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Server-to-server callback from CHIP; body is ignored, status is re-verified.
+app.post('/payments/chip/callback/:paymentId', async (req, res) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.paymentId)) return res.sendStatus(400);
+    await syncChipPayment(req.params.paymentId);
+    return res.sendStatus(200);
+  } catch (error) {
+    return res.sendStatus(500);
+  }
+});
+
+app.get('/payments/:id', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(404).json({ success: false, error: 'Payment not found.' });
+    const own = await pool.query(`SELECT id FROM payments WHERE id = $1 AND user_id = $2`, [req.params.id, req.user.id]);
+    if (!own.rows[0]) return res.status(404).json({ success: false, error: 'Payment not found.' });
+    const p = await syncChipPayment(req.params.id);
+    return res.json({ success: true, status: p.status, credits: toCreditsNumber(p.credits), amount: p.amount_cents / 100, currency: p.currency });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }

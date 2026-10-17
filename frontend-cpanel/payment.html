@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buy Credits - Mygenx Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex items-center justify-center p-4">
+  <main class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+    <h1 class="text-xl font-bold">Buy Credits</h1>
+    <p class="text-slate-400 text-sm">Secure payment via CHIP (FPX, cards, e-wallets). You will be redirected to complete payment.</p>
+    <div id="packages" class="space-y-2"></div>
+    <p id="error" class="hidden text-xs text-red-400"></p>
+    <a href="index.html" class="block text-center text-sm text-slate-400 hover:text-slate-200">Back to Studio</a>
+  </main>
+  <script src="session.js"></script>
+  <script>
+  const BACKEND_BASE_URL = String(window.WIRO_API_BASE_URL || window.__WIRO_API_BASE_URL || 'https://wiro-railway-app-production.up.railway.app').replace(/\/+$/, '');
+  const sessionController = window.WiroSession.create({ baseUrl: BACKEND_BASE_URL });
+  const $ = id => document.getElementById(id);
+  const showError = m => { $('error').textContent = m; $('error').classList.remove('hidden'); };
+  async function checkout(packageId, btn) {
+    $('error').classList.add('hidden');
+    btn.disabled = true;
+    try {
+      const res = await sessionController.fetch(`${BACKEND_BASE_URL}/payments/checkout`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ packageId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || 'Could not start payment.');
+      window.location.href = data.checkoutUrl;
+    } catch (e) { showError(e.message); btn.disabled = false; }
+  }
+  (async () => {
+    if (!sessionController.getToken()) { showError('Please log in on the Studio page first.'); return; }
+    try {
+      const res = await fetch(`${BACKEND_BASE_URL}/payments/packages`);
+      const data = await res.json();
+      if (!data.configured) showError('Payments are not available right now.');
+      data.packages.forEach(p => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm transition disabled:opacity-50';
+        const l = document.createElement('span'); l.textContent = `${p.label} - ${p.credits} credits`;
+        const r = document.createElement('span'); r.className = 'font-semibold text-emerald-300'; r.textContent = `${data.currency} ${p.amount.toFixed(2)}`;
+        b.append(l, r);
+        b.addEventListener('click', () => checkout(p.id, b));
+        $('packages').appendChild(b);
+      });
+    } catch (e) { showError('Could not load packages.'); }
+  })();
+  </script>
+</body>
+</html>
