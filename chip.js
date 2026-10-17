@@ -7,6 +7,23 @@ export const MIN_TOPUP_MYR = 10;
 export const MAX_TOPUP_MYR = 10000;
 export const SUGGESTED_TOPUPS_MYR = [10, 20, 50, 100];
 
+// Limited-time price slash: credits -> sale price in MYR. Ends at
+// CHIP_SALE_ENDS_AT (ISO date, optional); set CHIP_SALE_ENABLED=false to turn off.
+const SALE_PRICES_MYR = { 50: 45, 100: 80 };
+
+export function isSaleActive(now = Date.now()) {
+  if (String(process.env.CHIP_SALE_ENABLED || 'true').toLowerCase() === 'false') return false;
+  const end = process.env.CHIP_SALE_ENDS_AT;
+  if (!end) return true;
+  const t = Date.parse(end);
+  return Number.isFinite(t) && now < t;
+}
+
+// Price in MYR for a validated credit amount (1 credit = RM1 unless on sale).
+export function priceForCredits(credits) {
+  return isSaleActive() && SALE_PRICES_MYR[credits] !== undefined ? SALE_PRICES_MYR[credits] : credits;
+}
+
 // Returns the amount if valid, else null. Strict: only JSON numbers that are
 // integers; strings, booleans, decimals, negatives, NaN/Infinity are rejected.
 export function validateTopupAmount(value) {

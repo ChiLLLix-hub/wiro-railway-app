@@ -42,12 +42,21 @@
       const data = await res.json();
       MIN = data.minAmount;
       if (!data.configured) showError('Payments are not available right now.');
-      data.suggested.forEach(n => {
+      if (data.saleActive) {
+        const badge = document.createElement('p');
+        badge.className = 'text-xs font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2';
+        badge.textContent = 'Limited-time price slash!' + (data.saleEndsAt ? ` Ends ${new Date(data.saleEndsAt).toLocaleDateString()}.` : '');
+        $('packages').appendChild(badge);
+      }
+      data.suggested.forEach(({ credits: n, price, originalPrice }) => {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'w-full flex items-center justify-between bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-4 py-3 text-sm transition disabled:opacity-50';
         const l = document.createElement('span'); l.textContent = `${n} credits`;
-        const r = document.createElement('span'); r.className = 'font-semibold text-emerald-300'; r.textContent = `${data.currency} ${n.toFixed(2)}`;
+        const r = document.createElement('span'); r.className = 'font-semibold text-emerald-300'; if (price < originalPrice) {
+          const old = document.createElement('s'); old.className = 'text-slate-500 font-normal mr-2'; old.textContent = originalPrice.toFixed(2);
+          r.append(old, `${data.currency} ${price.toFixed(2)}`);
+        } else r.textContent = `${data.currency} ${price.toFixed(2)}`;
         b.append(l, r);
         b.addEventListener('click', () => checkout(n, b));
         $('packages').appendChild(b);

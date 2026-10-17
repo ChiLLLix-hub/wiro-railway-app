@@ -33,3 +33,4 @@ After configuring email, verify its connection with a user account and enable th
 - `BACKEND_BASE_URL` (recommended): public Railway URL, used for CHIP's payment callback.
 - `FRONTEND_BASE_URL`: site that hosts `payment-success.html` / `payment-failed.html`.
 - `CHIP_BASE_URL` (optional): defaults to `https://gate.chip-in.asia/api/v1`.
+- `CHIP_SALE_ENDS_AT` (optional ISO date): when the 50→RM45 / 100→RM80 price slash ends; unset = no end. `CHIP_SALE_ENABLED=false` turns it off.

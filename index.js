@@ -7,7 +7,7 @@ import { extname } from 'node:path';
 import { WiroClient, WiroApiError } from '@wiro-ai/wiro-mcp/client';
 import { pool, isDbConfigured, initSchema, ensurePgCryptoExtension } from './db.js';
 import { hashPassword, verifyPassword, issueToken, requireAuth, requireSession, claimSessionTab, logoutSession, requireAdmin, findUserByEmail, findUserById, createUser, recordLoginAttempt } from './auth.js';
-import { MIN_TOPUP_MYR, MAX_TOPUP_MYR, SUGGESTED_TOPUPS_MYR, validateTopupAmount, CHIP_CURRENCY, isChipConfigured, createPurchase, getPurchase } from './chip.js';
+import { MIN_TOPUP_MYR, MAX_TOPUP_MYR, SUGGESTED_TOPUPS_MYR, validateTopupAmount, priceForCredits, isSaleActive, CHIP_CURRENCY, isChipConfigured, createPurchase, getPurchase } from './chip.js';
 import { frontendBaseUrl, processNotificationOutbox, queueMail, queueOptInNotifications } from './notifications.js';
 
 const app = express();
@@ -1584,7 +1584,9 @@ app.get('/payments/packages', (req, res) => {
     currency: CHIP_CURRENCY,
     minAmount: MIN_TOPUP_MYR,
     maxAmount: MAX_TOPUP_MYR,
-    suggested: SUGGESTED_TOPUPS_MYR,
+    suggested: SUGGESTED_TOPUPS_MYR.map(credits => ({ credits, price: priceForCredits(credits), originalPrice: credits })),
+    saleActive: isSaleActive(),
+    saleEndsAt: process.env.CHIP_SALE_ENDS_AT || null,
   });
 });
 
@@ -1595,9 +1597,9 @@ app.post('/payments/checkout', apiRateLimiter, requireAuth, async (req, res) => 
     }
     const amount = validateTopupAmount(req.body?.amount);
     if (amount === null) {
-      return res.status(400).json({ success: false, error: `Invalid amount. Enter a whole number from ${CHIP_CURRENCY} ${MIN_TOPUP_MYR} to ${CHIP_CURRENCY} ${MAX_TOPUP_MYR}.` });
+      return res.status(400).json({ success: false, error: `Invalid amount. Enter a whole number of credits from ${CHIP_CURRENCY} ${MIN_TOPUP_MYR} to ${CHIP_CURRENCY} ${MAX_TOPUP_MYR}.` });
     }
-    const amountCents = amount * 100;
+    const amountCents = priceForCredits(amount) * 100;
     const user = await findUserById(req.user.id);
     if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
 
