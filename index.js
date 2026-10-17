@@ -1214,7 +1214,7 @@ async function chargeAdditionalCredits(userId, amount) {
 }
 
 // Records an entry in the credit_transactions audit trail. Only used for
-// out-of-band balance changes (admin adjustments, demo top-ups) - not for
+// out-of-band balance changes (admin adjustments, payment top-ups) - not for
 // the per-generation hold/charge/refund flow, which is already tracked on
 // generations.held_amount/total_cost.
 async function recordCreditTransaction({ userId, amount, type, reason, createdBy }) {
@@ -1383,7 +1383,7 @@ app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
 });
 
 const NOTIFICATION_CHANNELS = ['email'];
-const NOTIFICATION_EVENTS = ['generation_success', 'demo_credit_added'];
+const NOTIFICATION_EVENTS = ['generation_success'];
 
 app.get('/me/notification-settings', apiRateLimiter, requireAuth, async (req, res) => {
   try {
@@ -1486,49 +1486,6 @@ app.get('/me/summary', apiRateLimiter, requireAuth, async (req, res) => {
         totalGenerations: Number(spend.total_generations) || 0
       }
     });
-  } catch (error) {
-    return res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Demo-only credit top-up: no real payment processor is wired up yet, so
-// this just lets a signed-in user add one of a few fixed credit packages
-// directly to their balance. This exists purely so the "add credits" /
-// payment redirect flow (triggered when a user has <1 credit) has
-// somewhere real to send the user and something real to call - it must be
-// replaced with an actual payment gateway integration before going live.
-const DEMO_CREDIT_PACKAGES = { starter: 10, pro: 50, studio: 100 };
-
-app.post('/me/credits/topup', apiRateLimiter, requireAuth, async (req, res) => {
-  if (process.env.ENABLE_DEMO_TOPUP !== 'true') {
-    return res.status(403).json({ success: false, error: 'Demo top-up is disabled. Use /payments/checkout.' });
-  }
-  try {
-    const { packageId } = req.body || {};
-    const amount = DEMO_CREDIT_PACKAGES[packageId];
-    if (!amount) {
-      return res.status(400).json({ success: false, error: `Invalid package. Choose one of: ${Object.keys(DEMO_CREDIT_PACKAGES).join(', ')}.` });
-    }
-
-    const { rows } = await pool.query(
-      `UPDATE users SET credits = credits + $1, updated_at = now() WHERE id = $2 RETURNING credits`,
-      [amount, req.user.id]
-    );
-    if (!rows[0]) {
-      return res.status(404).json({ success: false, error: 'User not found.' });
-    }
-
-    await recordCreditTransaction({ userId: req.user.id, amount, type: 'topup_demo', reason: `Demo top-up: ${packageId} package` });
-    await queueOptInNotifications({
-      userId: req.user.id,
-      eventKey: `demo-credit:${req.user.id}:${randomUUID()}`,
-      eventType: 'demo_credit_added',
-      subject: 'Demo credits added',
-      message: `Demo credits added for testing: ${amount} credits. No payment was processed.`,
-      link: `${frontendBaseUrl()}/wiro/dashboard.html`
-    });
-
-    return res.json({ success: true, credits: toCreditsNumber(rows[0].credits), added: amount });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -1848,7 +1805,7 @@ app.get('/admin/generations', apiRateLimiter, requireAuth, requireAdmin, async (
   }
 });
 
-// Admin-only: the manual-adjustment / demo-topup audit trail (see
+// Admin-only: the manual-adjustment audit trail (see
 // credit_transactions table) - "view last transaction" in the admin
 // dashboard.
 app.get('/admin/transactions', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
@@ -1872,8 +1829,7 @@ app.get('/admin/transactions', apiRateLimiter, requireAuth, requireAdmin, async 
 // Admin-only: aggregate credit top-ups *and* spend (credits actually used
 // on completed generations, across every user) today/this week/this
 // month, plus the combined available user balance and headline counts.
-// Demo top-ups are the only purchase flow currently supported; manual
-// adjustments are excluded.
+// Only CHIP payment top-ups count; manual adjustments are excluded.
 app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, res) => {
   try {
     const { rows: revenueRows } = await pool.query(
@@ -1882,7 +1838,7 @@ app.get('/admin/stats', apiRateLimiter, requireAuth, requireAdmin, async (req, r
          COALESCE(SUM(amount) FILTER (WHERE created_at >= date_trunc('week', now())), 0) AS this_week,
          COALESCE(SUM(amount) FILTER (WHERE created_at >= date_trunc('month', now())), 0) AS this_month
        FROM credit_transactions
-       WHERE type = 'topup_demo' AND amount > 0`
+       WHERE type = 'topup_chip' AND amount > 0`
     );
     // Across every user (not just one), how many credits were actually
     // spent on completed generations today/this week/this month - mirrors

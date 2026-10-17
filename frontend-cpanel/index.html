@@ -504,7 +504,7 @@
 
   // Tracks the signed-in user's current credit balance so the Generate
   // button (and the top-bar credits badge) always reflect the latest known
-  // value. Updated from /me, /me/credits/topup, and the pre-submit
+  // value. Updated from /me, /payments/checkout, and the pre-submit
   // recheck in the generate form handler below.
   let currentCredits = null;
 
@@ -2881,7 +2881,7 @@
   refreshAuthUIFromServer();
 
   // ------------------------------------------------------------------
-  // Top bar: demo "Add Credits" modal (wired to POST /me/credits/topup)
+  // Top bar: "Add Credits" modal (CHIP checkout)
   // ------------------------------------------------------------------
   const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/payments/checkout`;
   const creditsModal = document.getElementById('credits-modal');

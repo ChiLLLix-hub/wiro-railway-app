@@ -1,6 +1,6 @@
 # Notifications setup
 
-Optional notifications are off by default. Users manage generation-complete and demo-credit-added notifications in **Dashboard → Notification preferences**. Email verification and password reset messages are account-security emails and are sent independently of those preferences.
+Optional notifications are off by default. Users manage generation-complete notifications in **Dashboard → Notification preferences**. Email verification and password reset messages are account-security emails and are sent independently of those preferences.
 
 ## Email
 
