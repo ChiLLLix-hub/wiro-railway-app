@@ -71,6 +71,34 @@
 
   <!-- ==================== AUTH MODAL ==================== -->
   <div id="auth-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4 relative">
+      <button id="auth-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
+      <h3 id="auth-modal-title" class="text-lg font-bold text-slate-100">Log in</h3>
+      <p class="text-slate-400 text-xs">Your prompts and generated outputs are private to your account only.</p>
+      <form id="auth-form" class="space-y-3">
+        <input id="auth-email" type="email" required placeholder="Email" autocomplete="email"
+          class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <input id="auth-password" type="password" required minlength="8" placeholder="Password (min 8 characters)" autocomplete="current-password"
+          class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <p id="auth-error" class="hidden text-xs text-red-400"></p>
+        <button id="auth-submit" type="submit" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-2.5 rounded-xl transition">Log in</button>
+      </form>
+      <button id="forgot-password-btn" type="button" class="text-xs text-blue-400 hover:underline w-full text-center">Forgot password?</button>
+      <button id="auth-switch-mode" type="button" class="text-xs text-slate-400 hover:text-slate-200 transition w-full text-center">Need an account? Sign up</button>
+    </div>
+  </div>
+
+  <div id="reset-password-modal" class="hidden fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70">
+    <form id="reset-password-form" class="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
+      <h3 class="text-lg font-bold">Set a new password</h3>
+      <input id="reset-password-input" type="password" required minlength="8" autocomplete="new-password" placeholder="New password (min 8 characters)" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm">
+      <p id="reset-password-error" class="hidden text-xs text-red-400"></p>
+      <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 font-semibold py-2.5 rounded-xl">Reset password</button>
+    </form>
+  </div>
+
+  <!-- ==================== CREDITS MODAL ==================== -->
+  <div id="credits-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
     <div class="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 space-y-5 relative">
       <button id="credits-modal-close" type="button" class="absolute top-4 right-4 text-slate-500 hover:text-slate-200 transition">✕</button>
       <div class="text-center space-y-1">
