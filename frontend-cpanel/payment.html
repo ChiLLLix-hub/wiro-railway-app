@@ -23,7 +23,7 @@
   const showError = m => { $('error').textContent = m; $('error').classList.remove('hidden'); };
   async function checkout(amount, btn) {
     $('error').classList.add('hidden');
-    if (!Number.isInteger(amount) || amount < MIN) { showError(`Enter a whole number of at least RM ${MIN}.`); return; }
+    if (!Number.isInteger(amount) || amount < MIN) { showError(`Enter a whole number of at least RM ${MIN}.`); return false; }
     btn.disabled = true;
     try {
       const res = await sessionController.fetch(`${BACKEND_BASE_URL}/payments/checkout`, {
@@ -32,7 +32,8 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) throw new Error(data.error || 'Could not start payment.');
       window.location.href = data.checkoutUrl;
-    } catch (e) { showError(e.message); btn.disabled = false; }
+      return true;
+    } catch (e) { showError(e.message); btn.disabled = false; return false; }
   }
   let MIN = 10;
   (async () => {
@@ -40,7 +41,8 @@
     const preset = new URLSearchParams(window.location.search).get('amount');
     if (preset && /^\d+$/.test(preset)) {
       const dummy = document.createElement('button');
-      await checkout(Number(preset), dummy);
+      const redirecting = await checkout(Number(preset), dummy);
+      if (redirecting) return;
     }
     try {
       const res = await fetch(`${BACKEND_BASE_URL}/payments/packages`);
