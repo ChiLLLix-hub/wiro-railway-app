@@ -2795,7 +2795,6 @@
   const authSwitchModeBtn = document.getElementById('auth-switch-mode');
 
   let authMode = 'login';
-  let pendingPaymentAmount = null;
 
   function openAuthModal(mode) {
     authMode = mode === 'register' ? 'register' : 'login';
@@ -2860,11 +2859,6 @@
         await loginAccount(email, password);
       }
       closeAuthModal();
-      if (pendingPaymentAmount) {
-        const amount = pendingPaymentAmount;
-        pendingPaymentAmount = null;
-        window.location.href = `payment.html?amount=${encodeURIComponent(amount)}`;
-      }
     } catch (err) {
       authErrorEl.textContent = err.message || 'Something went wrong.';
       authErrorEl.classList.remove('hidden');
@@ -2955,7 +2949,6 @@
         return;
       }
       if (!getAuthToken()) {
-        pendingPaymentAmount = amount;
         closeCreditsModal();
         openAuthModal('login');
         return;
