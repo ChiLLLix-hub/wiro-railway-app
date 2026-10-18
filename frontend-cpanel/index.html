@@ -192,6 +192,57 @@
       <div id="popular-tools-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4"></div>
     </section>
 
+    <section id="pricing-section" class="space-y-4">
+      <div class="text-center space-y-1">
+        <h2 class="text-2xl font-bold text-slate-100">Plans &amp; Pricing</h2>
+        <p class="text-sm text-slate-400">Top up credits and use any tool. Limited-time discounts.</p>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="pricing-card bg-slate-900 rounded-2xl border border-slate-800 p-5 space-y-4">
+          <div class="flex items-center justify-between"><span class="text-sm font-semibold text-slate-300">Starter</span></div>
+          <div class="flex items-baseline gap-2">
+            <span class="text-3xl font-extrabold text-slate-100">RM 10</span>
+          </div>
+          <button type="button" class="pricing-cta w-full bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-semibold px-4 py-2 rounded-xl transition">Get started</button>
+          <ul class="space-y-2 text-sm text-slate-300">
+            <li>✓ All AI models</li><li>✓ Pay-as-you-go credits</li><li>✓ No subscription</li>
+          </ul>
+        </div>
+        <div class="pricing-card bg-slate-900 rounded-2xl border border-slate-800 p-5 space-y-4">
+          <div class="flex items-center justify-between"><span class="text-sm font-semibold text-slate-300">Basic</span></div>
+          <div class="flex items-baseline gap-2">
+            <span class="text-3xl font-extrabold text-slate-100">RM 20</span>
+          </div>
+          <button type="button" class="pricing-cta w-full bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-semibold px-4 py-2 rounded-xl transition">Get started</button>
+          <ul class="space-y-2 text-sm text-slate-300">
+            <li>✓ All AI models</li><li>✓ Pay-as-you-go credits</li><li>✓ No subscription</li>
+          </ul>
+        </div>
+        <div class="pricing-card bg-slate-900 rounded-2xl border border-blue-500 ring-2 ring-blue-500/40 p-5 space-y-4">
+          <div class="flex items-center justify-between"><span class="text-sm font-semibold text-slate-300">Popular</span><span class="text-[10px] font-bold uppercase bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded-full">Popular</span></div>
+          <div class="flex items-baseline gap-2">
+            <span class="text-3xl font-extrabold text-slate-100">RM 45</span>
+            <span class="text-lg text-slate-500 line-through">RM 50</span>
+          </div>
+          <button type="button" class="pricing-cta w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition">Get started</button>
+          <ul class="space-y-2 text-sm text-slate-300">
+            <li>✓ All AI models</li><li>✓ Pay-as-you-go credits</li><li>✓ No subscription</li>
+          </ul>
+        </div>
+        <div class="pricing-card bg-slate-900 rounded-2xl border border-slate-800 p-5 space-y-4">
+          <div class="flex items-center justify-between"><span class="text-sm font-semibold text-slate-300">Pro</span></div>
+          <div class="flex items-baseline gap-2">
+            <span class="text-3xl font-extrabold text-slate-100">RM 80</span>
+            <span class="text-lg text-slate-500 line-through">RM 100</span>
+          </div>
+          <button type="button" class="pricing-cta w-full bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-semibold px-4 py-2 rounded-xl transition">Get started</button>
+          <ul class="space-y-2 text-sm text-slate-300">
+            <li>✓ All AI models</li><li>✓ Pay-as-you-go credits</li><li>✓ No subscription</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
     <!-- ==================== MODEL BROWSER VIEW ==================== -->
     <div id="browser-view" class="scroll-mt-24 bg-slate-900 rounded-2xl shadow-2xl border border-slate-800 p-6 md:p-8 space-y-4">
       <div id="browse">
@@ -2810,6 +2861,7 @@
 
   document.getElementById('login-btn')?.addEventListener('click', () => openAuthModal('login'));
   document.getElementById('register-btn')?.addEventListener('click', () => openAuthModal('register'));
+  document.querySelectorAll('.pricing-cta').forEach(b => b.addEventListener('click', () => openAuthModal('register')));
   document.querySelector('.footer-login')?.addEventListener('click', () => openAuthModal('login'));
   document.querySelector('.footer-register')?.addEventListener('click', () => openAuthModal('register'));
   document.getElementById('logout-btn')?.addEventListener('click', logoutAccount);
