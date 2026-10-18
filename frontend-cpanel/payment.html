@@ -37,6 +37,11 @@
   let MIN = 10;
   (async () => {
     if (!sessionController.getToken()) { showError('Please log in on the Studio page first.'); return; }
+    const preset = new URLSearchParams(window.location.search).get('amount');
+    if (preset && /^\d+$/.test(preset)) {
+      const dummy = document.createElement('button');
+      await checkout(Number(preset), dummy);
+    }
     try {
       const res = await fetch(`${BACKEND_BASE_URL}/payments/packages`);
       const data = await res.json();

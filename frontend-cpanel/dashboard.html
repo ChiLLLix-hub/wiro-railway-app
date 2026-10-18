@@ -367,18 +367,11 @@
   }
 
   document.querySelectorAll('.credits-package-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-            const errorEl = document.getElementById('credits-modal-error');
+    btn.addEventListener('click', () => {
+      const errorEl = document.getElementById('credits-modal-error');
       errorEl.classList.add('hidden');
       try {
-        const res = await authFetch(RAILWAY_CREDITS_TOPUP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ amount: topupAmount(btn) })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) throw new Error(data.error || 'Could not start payment.');
-        window.location.href = data.checkoutUrl;
+        window.location.href = `payment.html?amount=${encodeURIComponent(topupAmount(btn))}`;
       } catch (error) {
         errorEl.textContent = error.message;
         errorEl.classList.remove('hidden');
