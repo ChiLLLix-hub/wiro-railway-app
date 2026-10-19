@@ -18,20 +18,35 @@
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen">
 
-  <!-- ==================== TOP BAR / HEADER ==================== -->
-  <header class="sticky top-0 z-40 bg-slate-950/80 backdrop-blur border-b border-slate-800">
-    <div class="max-w-7xl mx-auto px-4 md:px-8 py-3 flex items-center justify-between gap-4">
-      <a href="index.html" class="flex items-center gap-2 shrink-0">
-        <span class="px-3 py-1 rounded-lg bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white text-sm">MYGENX</span>
-        <span class="font-extrabold text-lg text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 hidden sm:inline">Admin</span>
-      </a>
-      <div class="flex items-center gap-2 shrink-0">
-        <a href="dashboard.html" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">My Dashboard</a>
-        <a href="index.html" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Generate</a>
-        <span id="auth-user-email" class="text-sm text-slate-300 truncate max-w-[10rem]"></span>
-        <button id="logout-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Log out</button>
+  <!-- ==================== SIDE PANEL ==================== -->
+  <div id="drawer-backdrop" class="hidden fixed inset-0 z-40 bg-black/60 lg:hidden"></div>
+  <aside id="sidebar" class="hidden fixed inset-y-0 left-0 z-50 w-64 -translate-x-full lg:translate-x-0 transition-transform duration-200 bg-slate-900 border-r border-slate-800 flex flex-col">
+    <div class="px-4 py-4 border-b border-slate-800 flex items-center justify-between gap-2">
+      <div class="min-w-0">
+        <p class="text-[10px] uppercase tracking-widest text-slate-500">Signed in as</p>
+        <p id="auth-user-email" class="text-sm font-semibold text-slate-100 truncate"></p>
       </div>
+      <button id="drawer-close" type="button" aria-label="Close menu" class="lg:hidden text-slate-400 hover:text-white p-1">✕</button>
     </div>
+    <nav class="flex-1 overflow-y-auto p-3 space-y-1 text-sm">
+      <a href="#stats" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Overview</a>
+      <a href="#users" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Users</a>
+      <a href="#user-generations" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">User Generations</a>
+      <a href="#retrieve-generation" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Retrieve Generation</a>
+      <a href="#credit-transactions" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Credit Transactions</a>
+      <a href="#login-attempts" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Login Attempts</a>
+    </nav>
+    <div class="p-3 border-t border-slate-800 space-y-2">
+      <a href="dashboard.html" class="block px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-800">My Dashboard</a>
+      <a href="index.html" class="block px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-800">Run a model</a>
+      <button id="logout-btn" type="button" class="w-full text-left px-3 py-2 rounded-lg text-sm text-red-300 hover:bg-slate-800">Logout</button>
+    </div>
+  </aside>
+
+  <div id="app-shell" class="lg:pl-64">
+  <header class="lg:hidden sticky top-0 z-30 bg-slate-950/80 backdrop-blur border-b border-slate-800 px-4 py-3 flex items-center gap-3">
+    <button id="drawer-open" type="button" aria-label="Open menu" class="p-2 rounded-lg border border-slate-700 text-slate-200">☰</button>
+    <span class="font-bold">Admin</span>
   </header>
 
   <div id="denied-notice" class="hidden max-w-xl mx-auto mt-20 text-center space-y-4 px-4">
@@ -43,7 +58,7 @@
     <h1 class="text-2xl font-bold">Admin Dashboard</h1>
 
     <!-- ==================== STATS ==================== -->
-    <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <section id="stats" class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4">
         <p class="text-xs text-slate-400">Revenue today / week / month</p>
         <p id="stat-revenue" class="text-sm font-semibold mt-1">-</p>
@@ -74,7 +89,7 @@
     </section>
 
     <!-- ==================== USERS ==================== -->
-    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+    <section id="users" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 scroll-mt-4">
       <div class="flex items-center justify-between gap-3 flex-wrap">
         <h2 class="text-lg font-bold">Users</h2>
         <input id="users-search" type="search" placeholder="Search by email or name..."
@@ -101,7 +116,7 @@
     </section>
 
     <!-- ==================== GENERATIONS ==================== -->
-    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+    <section id="user-generations" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 scroll-mt-4">
       <div class="flex items-center justify-between gap-3 flex-wrap">
         <h2 class="text-lg font-bold">User Generations</h2>
         <input id="generations-search" type="search" placeholder="Search by email, model or prompt..."
@@ -127,7 +142,7 @@
     </section>
 
     <!-- ==================== LOOK UP GENERATION BY TASK ID ==================== -->
-    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+    <section id="retrieve-generation" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 scroll-mt-4">
       <h2 class="text-lg font-bold">Retrieve a Generation by Task ID</h2>
       <p class="text-slate-400 text-xs">Look up any user's job/task ID to view its result, or the failure reason if it didn't succeed.</p>
 
@@ -181,7 +196,7 @@
     </section>
 
     <!-- ==================== TRANSACTIONS ==================== -->
-    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+    <section id="credit-transactions" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 scroll-mt-4">
       <h2 class="text-lg font-bold">Credit Transactions</h2>
       <div class="overflow-x-auto max-h-80 overflow-y-auto">
         <table class="w-full text-sm text-left">
@@ -202,7 +217,7 @@
     </section>
 
     <!-- ==================== LOGIN ATTEMPTS ==================== -->
-    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+    <section id="login-attempts" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 scroll-mt-4">
       <div class="flex items-center justify-between gap-3 flex-wrap">
         <h2 class="text-lg font-bold">Login Attempts</h2>
         <label class="flex items-center gap-2 text-sm text-slate-300">
@@ -227,6 +242,7 @@
       </div>
     </section>
   </main>
+  </div>
 
   <!-- ==================== CREDIT ADJUST MODAL ==================== -->
   <div id="credit-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
@@ -793,6 +809,17 @@
     runAdminAction(() => loadLoginAttempts(e.target.checked));
   });
 
+  const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('drawer-backdrop');
+  function setDrawer(open) {
+    sidebar.classList.toggle('-translate-x-full', !open);
+    backdrop.classList.toggle('hidden', !open);
+  }
+  document.getElementById('drawer-open').addEventListener('click', () => setDrawer(true));
+  document.getElementById('drawer-close').addEventListener('click', () => setDrawer(false));
+  backdrop.addEventListener('click', () => setDrawer(false));
+  sidebar.querySelectorAll('nav a').forEach(a => a.addEventListener('click', () => setDrawer(false)));
+
   document.getElementById('logout-btn').addEventListener('click', async () => {
     if (await sessionController.logout()) window.location.href = 'index.html';
   });
@@ -809,6 +836,7 @@
         return;
       }
       document.getElementById('auth-user-email').textContent = user.email;
+      document.getElementById('sidebar').classList.remove('hidden');
       document.getElementById('admin-main').classList.remove('hidden');
       await Promise.all([loadStats(), loadUsers(), loadGenerations(), loadTransactions(), loadLoginAttempts()]);
     } catch (error) {
