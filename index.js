@@ -1680,6 +1680,19 @@ app.get('/me/generations', apiRateLimiter, requireAuth, async (req, res) => {
   }
 });
 
+app.get('/me/transactions', apiRateLimiter, requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, amount, type, reason, created_at
+       FROM credit_transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 200`,
+      [req.user.id]
+    );
+    return res.json({ success: true, transactions: rows });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ==================== ADMIN DASHBOARD ====================
 
 // Admin-only: list all accounts, so support/ops can review or promote users

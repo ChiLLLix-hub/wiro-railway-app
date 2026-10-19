@@ -8,6 +8,7 @@
   <link rel="icon" href="https://files.svgcdn.io/twemoji/robot.svg" type="image/x-icon">
   <style>
     html { scroll-behavior: smooth; }
+    #admin-link:not(.hidden) { display: block; }
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 9999px; }
@@ -15,24 +16,40 @@
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen">
 
-  <!-- ==================== TOP BAR / HEADER ==================== -->
-  <header class="sticky top-0 z-40 bg-slate-950/80 backdrop-blur border-b border-slate-800">
-    <div class="max-w-7xl mx-auto px-4 md:px-8 py-3 flex items-center justify-between gap-4">
-      <a href="index.html" class="flex items-center gap-2 shrink-0">
-        <span class="px-3 py-1 rounded-lg bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white text-sm">MYGENX</span>
-        <span class="font-extrabold text-lg text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-400 hidden sm:inline">Studio</span>
-      </a>
-      <div class="flex items-center gap-2 shrink-0">
-        <button id="credits-badge" type="button" class="text-xs font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-lg hover:bg-emerald-500/20 transition" title="Add credits">
-          <span id="credits-badge-amount">0</span> credits
-        </button>
-        <a href="index.html" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Generate</a>
-        <a id="admin-link" href="admin.html" class="hidden text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Admin</a>
-        <span id="auth-user-email" class="text-sm text-slate-300 truncate max-w-[10rem]"></span>
-        <button id="logout-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Log out</button>
+  <!-- ==================== SIDE PANEL (DRAWER) ==================== -->
+  <div id="drawer-backdrop" class="hidden fixed inset-0 z-40 bg-black/60 lg:hidden"></div>
+  <aside id="sidebar" class="hidden fixed inset-y-0 left-0 z-50 w-64 -translate-x-full lg:translate-x-0 transition-transform duration-200 bg-slate-900 border-r border-slate-800 flex flex-col">
+    <div class="px-4 py-4 border-b border-slate-800 flex items-center justify-between gap-2">
+      <div class="min-w-0">
+        <p class="text-[10px] uppercase tracking-widest text-slate-500">Signed in as</p>
+        <p id="sidebar-user" class="text-sm font-semibold text-slate-100 truncate"></p>
       </div>
+      <button id="drawer-close" type="button" aria-label="Close menu" class="lg:hidden text-slate-400 hover:text-white p-1">✕</button>
+    </div>
+    <nav class="flex-1 overflow-y-auto p-3 space-y-1 text-sm">
+      <a href="#dashboard" data-nav="dashboard" class="nav-link block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Dashboard</a>
+      <a href="#history" data-nav="history" class="nav-link block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Generation History</a>
+      <a href="#transactions" data-nav="transactions" class="nav-link block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Transaction</a>
+      <a href="#account" data-nav="account" class="nav-link block px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Account</a>
+      <a id="admin-link" href="admin.html" class="hidden px-3 py-2 rounded-lg text-slate-300 hover:bg-slate-800">Admin</a>
+    </nav>
+    <div class="p-3 border-t border-slate-800 space-y-2">
+      <a href="index.html" class="block px-3 py-2 rounded-lg text-sm text-slate-300 hover:bg-slate-800">Run a model</a>
+      <button id="logout-btn" type="button" class="w-full text-left px-3 py-2 rounded-lg text-sm text-red-300 hover:bg-slate-800">Logout</button>
+    </div>
+  </aside>
+
+  <div id="app-shell" class="hidden lg:pl-64">
+  <header class="sticky top-0 z-30 bg-slate-950/80 backdrop-blur border-b border-slate-800">
+    <div class="px-4 md:px-8 py-3 flex items-center justify-between gap-4">
+      <button id="drawer-open" type="button" aria-label="Open menu" class="lg:hidden p-2 rounded-lg border border-slate-700 text-slate-200">☰</button>
+      <h1 id="view-title" class="text-lg font-bold truncate">Dashboard</h1>
+      <button id="credits-badge" type="button" class="text-xs font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-lg shrink-0">
+        <span id="credits-badge-amount">0</span> credits
+      </button>
     </div>
   </header>
+
 
   <!-- Shown only when there is no valid auth token at all - dashboard.html
        requires a logged-in user, unlike index.html which is browsable
@@ -42,8 +59,9 @@
     <a href="index.html" class="inline-block text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-5 py-2.5 rounded-xl shadow-lg transition">Go to Studio</a>
   </div>
 
-  <main id="dashboard-main" class="hidden max-w-7xl mx-auto px-4 md:px-8 py-8 space-y-8">
-    <h1 class="text-2xl font-bold">My Dashboard</h1>
+  <main id="dashboard-main" class="hidden px-4 md:px-8 py-8 space-y-8 max-w-6xl">
+    <section id="view-dashboard" data-view class="space-y-8">
+      <h2 class="text-2xl font-bold">Welcome back, <span id="welcome-name"></span></h2>
 
     <!-- ==================== OVERVIEW CARDS ==================== -->
     <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -72,31 +90,9 @@
         <button id="add-credits-btn" type="button" class="text-sm font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white px-4 py-2 rounded-xl shadow-lg transition">Add Credits</button>
       </div>
     </section>
-
-    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-5">
-      <div>
-        <h2 class="text-lg font-bold">Notification preferences</h2>
-        <p class="text-xs text-slate-400 mt-1">All optional notifications start off. Email verification and password-reset emails are always sent for account security.</p>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="w-full min-w-[34rem] text-sm text-left">
-          <thead class="text-slate-400 border-b border-slate-800">
-            <tr><th class="py-2 pr-4">Channel</th><th class="py-2 pr-4">Generation completed</th><th class="py-2">Account</th></tr>
-          </thead>
-          <tbody class="divide-y divide-slate-800">
-            <tr>
-              <th class="py-3 pr-4 font-medium">Email</th>
-              <td class="py-3 pr-4"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" data-channel="email" data-event="generation_success" class="notification-pref peer sr-only"><span class="w-11 h-6 bg-slate-700 rounded-full peer-checked:bg-blue-500 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5"></span><span class="ml-2 text-xs text-slate-400">Off / On</span></label></td>
-              <td id="email-link-status" class="py-3 text-xs text-slate-400">Checking…</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p id="notification-settings-status" role="status" class="text-xs text-slate-400"></p>
     </section>
 
-    <!-- ==================== GENERATION HISTORY ==================== -->
-    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+    <section id="view-history" data-view class="hidden bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
       <div class="flex items-center justify-between gap-3">
         <h2 class="text-lg font-bold">Generation History</h2>
         <button id="refresh-generations-btn" type="button" class="p-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white transition" title="Refresh generation history" aria-label="Refresh generation history">
@@ -122,7 +118,54 @@
         <p id="generations-empty" class="hidden text-sm text-slate-500 py-4">No generations yet.</p>
       </div>
     </section>
+
+    <section id="view-transactions" data-view class="hidden bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="text-lg font-bold">Credit Transactions</h2>
+        <button id="refresh-transactions-btn" type="button" class="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800">Refresh</button>
+      </div>
+      <p id="transactions-status" role="status" class="hidden text-xs text-red-400"></p>
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[32rem] text-sm text-left">
+          <thead class="text-slate-400 border-b border-slate-800">
+            <tr><th class="py-2 pr-4">Date</th><th class="py-2 pr-4">Type</th><th class="py-2 pr-4">Description</th><th class="py-2 pr-4 text-right">Amount</th></tr>
+          </thead>
+          <tbody id="transactions-tbody" class="divide-y divide-slate-800"></tbody>
+        </table>
+        <p id="transactions-empty" class="hidden text-sm text-slate-500 py-4">No transactions yet.</p>
+      </div>
+    </section>
+
+    <section id="view-account" data-view class="hidden space-y-8">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
+        <h2 class="text-lg font-bold">Account</h2>
+        <p class="text-sm text-slate-400">Email: <span id="account-email" class="text-slate-200"></span></p>
+        <p class="text-sm text-slate-400">Role: <span id="account-role" class="text-slate-200"></span></p>
+      </div>
+    <section class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-5">
+      <div>
+        <h2 class="text-lg font-bold">Notification preferences</h2>
+        <p class="text-xs text-slate-400 mt-1">All optional notifications start off. Email verification and password-reset emails are always sent for account security.</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[34rem] text-sm text-left">
+          <thead class="text-slate-400 border-b border-slate-800">
+            <tr><th class="py-2 pr-4">Channel</th><th class="py-2 pr-4">Generation completed</th><th class="py-2">Account</th></tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800">
+            <tr>
+              <th class="py-3 pr-4 font-medium">Email</th>
+              <td class="py-3 pr-4"><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" data-channel="email" data-event="generation_success" class="notification-pref peer sr-only"><span class="w-11 h-6 bg-slate-700 rounded-full peer-checked:bg-blue-500 peer-disabled:opacity-50 peer-disabled:cursor-not-allowed transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:transition-transform peer-checked:after:translate-x-5"></span><span class="ml-2 text-xs text-slate-400">Off / On</span></label></td>
+              <td id="email-link-status" class="py-3 text-xs text-slate-400">Checking…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p id="notification-settings-status" role="status" class="text-xs text-slate-400"></p>
+    </section>
+    </section>
   </main>
+  </div>
 
   <!-- ==================== ADD CREDITS (DUMMY PAYMENT) MODAL ==================== -->
   <div id="credits-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
@@ -184,6 +227,7 @@
   const RAILWAY_ME_URL = `${BACKEND_BASE_URL}/me`;
   const RAILWAY_ME_SUMMARY_URL = `${BACKEND_BASE_URL}/me/summary`;
   const RAILWAY_ME_GENERATIONS_URL = `${BACKEND_BASE_URL}/me/generations`;
+  const RAILWAY_ME_TRANSACTIONS_URL = `${BACKEND_BASE_URL}/me/transactions`;
   const RAILWAY_CREDITS_TOPUP_URL = `${BACKEND_BASE_URL}/payments/checkout`;
   const RAILWAY_NOTIFICATION_SETTINGS_URL = `${BACKEND_BASE_URL}/me/notification-settings`;
   const REGENERATE_STORAGE_KEY = 'wiroRegeneratePreset';
@@ -291,7 +335,11 @@
   async function refreshDashboard() {
     const [user, summary, generations] = await Promise.all([loadMe(), loadSummary(), loadGenerations()]);
 
-    document.getElementById('auth-user-email').textContent = user.email;
+    const userLabel = user.email || user.displayName || '';
+    document.getElementById('sidebar-user').textContent = userLabel;
+    document.getElementById('welcome-name').textContent = user.displayName || userLabel;
+    document.getElementById('account-email').textContent = user.email || '-';
+    document.getElementById('account-role').textContent = user.role || '-';
     document.getElementById('admin-link').classList.toggle('hidden', user.role !== 'admin');
     document.getElementById('credits-badge-amount').textContent = Number.isFinite(summary.credits) ? summary.credits : 0;
     document.getElementById('stat-credits').textContent = Number.isFinite(summary.credits) ? summary.credits : 0;
@@ -301,7 +349,7 @@
       `${formatCost(summary.spendToday)} / ${formatCost(summary.spendThisWeek)} / ${formatCost(summary.spendThisMonth)}`;
 
     renderGenerations(generations);
-    await loadNotificationSettings();
+    await Promise.all([loadNotificationSettings(), refreshTransactions().catch(() => {})]);
   }
 
   async function refreshGenerationHistory() {
@@ -321,6 +369,64 @@
       icon.classList.remove('animate-spin');
     }
   }
+
+  const TX_LABELS = { admin_adjust: 'Admin adjustment', topup_demo: 'Demo top-up', topup_chip: 'Top-up (CHIP)' };
+  async function refreshTransactions() {
+    const status = document.getElementById('transactions-status');
+    status.classList.add('hidden');
+    try {
+      const data = await authJson(RAILWAY_ME_TRANSACTIONS_URL, { cache: 'no-store' });
+      const rows = data.transactions || [];
+      const tbody = document.getElementById('transactions-tbody');
+      tbody.innerHTML = '';
+      document.getElementById('transactions-empty').classList.toggle('hidden', rows.length > 0);
+      for (const row of rows) {
+        const amount = Number(row.amount);
+        const tr = document.createElement('tr');
+        const cells = [formatDate(row.created_at), TX_LABELS[row.type] || row.type, row.reason || '-'];
+        cells.forEach((text, i) => {
+          const td = document.createElement('td');
+          td.className = 'py-2 pr-4' + (i === 0 ? ' text-slate-400' : '');
+          td.textContent = text;
+          tr.appendChild(td);
+        });
+        const td = document.createElement('td');
+        td.className = 'py-2 pr-4 text-right font-mono ' + (amount >= 0 ? 'text-emerald-300' : 'text-red-300');
+        td.textContent = (amount > 0 ? '+' : '') + (Number.isFinite(amount) ? amount : row.amount);
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+      }
+    } catch (error) {
+      status.textContent = error.message || 'Could not load transactions.';
+      status.classList.remove('hidden');
+      throw error;
+    }
+  }
+
+  const VIEWS = { dashboard: 'Dashboard', history: 'Generation History', transactions: 'Transaction', account: 'Account' };
+  const sidebar = document.getElementById('sidebar');
+  const backdrop = document.getElementById('drawer-backdrop');
+  function setDrawer(open) {
+    sidebar.classList.toggle('-translate-x-full', !open);
+    backdrop.classList.toggle('hidden', !open);
+  }
+  function showView() {
+    const name = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'dashboard';
+    document.querySelectorAll('[data-view]').forEach(el => el.classList.toggle('hidden', el.id !== `view-${name}`));
+    document.querySelectorAll('.nav-link').forEach(a => {
+      const active = a.dataset.nav === name;
+      a.classList.toggle('bg-slate-800', active);
+      a.classList.toggle('text-white', active);
+      a.classList.toggle('text-slate-300', !active);
+    });
+    document.getElementById('view-title').textContent = VIEWS[name];
+    setDrawer(false);
+  }
+  window.addEventListener('hashchange', showView);
+  document.getElementById('drawer-open').addEventListener('click', () => setDrawer(true));
+  document.getElementById('drawer-close').addEventListener('click', () => setDrawer(false));
+  backdrop.addEventListener('click', () => setDrawer(false));
+  document.getElementById('refresh-transactions-btn').addEventListener('click', () => refreshTransactions().catch(() => {}));
 
   function openCreditsModal() {
     document.getElementById('credits-modal').classList.remove('hidden');
@@ -387,6 +493,9 @@
     try {
       await refreshDashboard();
       document.getElementById('dashboard-main').classList.remove('hidden');
+      document.getElementById('app-shell').classList.remove('hidden');
+      sidebar.classList.remove('hidden');
+      showView();
     } catch (error) {
       document.getElementById('signed-out-notice').classList.remove('hidden');
     }
