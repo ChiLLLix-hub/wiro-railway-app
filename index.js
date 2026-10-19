@@ -1408,6 +1408,37 @@ app.post('/auth/reset-password', authRateLimiter, async (req, res) => {
   }
 });
 
+app.post('/me/change-password', authRateLimiter, requireAuth, async (req, res) => {
+  const currentPassword = String(req.body?.currentPassword || '');
+  const newPassword = String(req.body?.newPassword || '');
+  if (!currentPassword) return res.status(400).json({ success: false, error: 'Current password is required.' });
+  if (newPassword.length < 8) return res.status(400).json({ success: false, error: 'New password must be at least 8 characters.' });
+  if (newPassword === currentPassword) return res.status(400).json({ success: false, error: 'New password must be different from the current password.' });
+  try {
+    const user = await findUserById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (!(await verifyPassword(currentPassword, user.password_hash))) {
+      return res.status(400).json({ success: false, error: 'Current password is incorrect.' });
+    }
+    const passwordHash = await hashPassword(newPassword);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [passwordHash, user.id]);
+    try {
+      await queueMail({
+        userId: user.id,
+        eventKey: `password_changed:${user.id}:${randomUUID()}`,
+        to: user.email,
+        subject: 'Your password was changed',
+        message: 'Success: your password was changed. If you did not make this change, please reset your password immediately.'
+      });
+    } catch (mailError) {
+      console.error('Could not queue password-changed email:', mailError.message);
+    }
+    return res.json({ success: true, message: 'Password changed successfully.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: 'Could not change password.' });
+  }
+});
+
 app.get('/me', apiRateLimiter, requireAuth, async (req, res) => {
   try {
     const user = await findUserById(req.user.id);

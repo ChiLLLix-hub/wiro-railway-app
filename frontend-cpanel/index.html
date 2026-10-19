@@ -53,10 +53,6 @@
             <span id="credits-badge-amount">0</span> credits
           </button>
           <a id="dashboard-link" href="dashboard.html" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Dashboard</a>
-          <!-- Only shown when /me reports role === 'admin' - see updateAuthUI(). -->
-          <a id="admin-link" href="admin.html" class="hidden text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Admin</a>
-          <span id="auth-user-email" class="text-sm text-slate-300 truncate max-w-[10rem]"></span>
-          <button id="logout-btn" type="button" class="text-sm font-medium text-slate-200 hover:text-white px-3 py-2 rounded-lg border border-slate-700 transition">Log out</button>
         </div>
       </div>
     </div>
@@ -566,15 +562,11 @@
   function updateAuthUI(user) {
     const signedOutEl = document.getElementById('auth-signed-out');
     const signedInEl = document.getElementById('auth-signed-in');
-    const emailEl = document.getElementById('auth-user-email');
-    const adminLinkEl = document.getElementById('admin-link');
     if (!signedOutEl || !signedInEl) return;
 
     const isLoggedIn = Boolean(user) || Boolean(getAuthToken());
     signedOutEl.classList.toggle('hidden', isLoggedIn);
     signedInEl.classList.toggle('hidden', !isLoggedIn);
-    if (user && emailEl) emailEl.textContent = user.email;
-    if (adminLinkEl) adminLinkEl.classList.toggle('hidden', !(user && user.role === 'admin'));
     updateCreditsDisplay(user ? user.credits : null);
   }
 
