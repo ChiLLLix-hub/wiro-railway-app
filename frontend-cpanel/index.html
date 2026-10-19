@@ -2962,6 +2962,11 @@
     openCreditsModal('Pick a credit package to top up.');
   });
 
+  if (new URLSearchParams(window.location.search).get('credits') === '1') {
+    openCreditsModal('Pick a credit package to top up.');
+    history.replaceState(null, '', window.location.pathname);
+  }
+
   const footerYearEl = document.getElementById('footer-year');
   if (footerYearEl) footerYearEl.textContent = String(new Date().getFullYear());
 
